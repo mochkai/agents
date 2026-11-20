@@ -1,4 +1,5 @@
 ---
+name: tester
 description: Independent verifier. Writes tests for new behavior, runs the test suite, and reports PASS or FAIL with exact failures. Use after every coder round.
 model: inherit
 ---

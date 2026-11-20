@@ -1,4 +1,5 @@
 ---
+name: coder
 description: Implements code changes from a precise spec given by the orchestrator. Use for all production code edits.
 model: inherit
 ---

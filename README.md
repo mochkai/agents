@@ -32,6 +32,15 @@ git -C ~/repo branch -d agent/<id>
 - `prompts/orchestrator.md`: process and hard rules (no push, no merge, etc.)
 - `agents/*.md`: subagents. Add a file such as `reviewer.md` with `description:` frontmatter to add a role, then mention it in the orchestrator prompt.
 
+## Agent profiles everywhere
+`agents/coder.md` and `agents/tester.md` are linked into `~/.claude/agents/`, so every Claude Code session (VS Code, desktop, CLI) can delegate to them as subagents. Edit them here: the farm and your IDE both use the same file. To set them up on a new machine:
+```bash
+mkdir -p ~/.claude/agents && ln -sfn ~/agents/agents/*.md ~/.claude/agents/
+```
+
+## Shared AGENTS.md
+`templates/AGENTS.md` holds the master copy of the rules file that belongs in the root of every repo.
+
 ## Skills
 Agents use the skills committed in the target repo's `.claude/skills/`. Copy them there from `~/skills`. To preload a skill into a role, add `skills: name1, name2` to that agent's frontmatter in `agents/*.md`.
 
