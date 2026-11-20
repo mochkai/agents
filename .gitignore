@@ -1,0 +1,4 @@
+worktrees/
+logs/
+tasks/running/
+.farm.lock
