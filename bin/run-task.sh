@@ -43,6 +43,7 @@ set +e
     --agents "$LOG.agents.json" \
     --permission-mode "$PERM" \
     --model "$MODEL" \
+    $( [ -d "$HOME/skills" ] && printf -- '--add-dir %s' "$HOME/skills" ) \
     --output-format json < /dev/null ) > "$LOG.json" 2> "$LOG.err"
 RC=$?
 set -e
