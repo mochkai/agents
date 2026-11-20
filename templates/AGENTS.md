@@ -18,9 +18,9 @@
 - When using sub-agents to implement features, act as a coordinator only
 - Use the best model for the task - premium models for complex tasks (like coding) and mid-tier models for simpler tasks, like documentation
 - After completing features (large or small), always run commands like lint, type check and next build to check code quality
-- Allways add comments to the functions that can be translated to documentations using doc blocks, when necessary for complex functions also add one line explanations in the code itself.
+- Always add doc block comments to functions so they can be turned into documentation. For complex functions, also add one-line explanations in the code itself.
 - Any changes should be made on their own branches and reviewed either by the human or the code review agent before being merged into the master branch.
-- Every change should be acompanied by an update changelog in the changelog.md of the project (if it does not have a changelog.md file create one)
+- Every change should be accompanied by an update to the project's changelog.md (if it does not have a changelog.md file, create one)
 
 ## DATABASE SCHEMA CHANGES
 
