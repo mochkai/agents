@@ -1,48 +1,72 @@
 # Agent farm
 
-Autonomous coding team built on the Claude Code CLI (Pro subscription).
+Autonomous coding agents built on the Claude Code CLI (Pro subscription). Queue tasks for any of your projects, and get pull requests back.
 
 ```
-task ──► orchestrator ──► coder ──► tester ──(fail? back to coder, max 3 rounds)──► commit on agent/<id> branch
+                      ┌──────────── dispatcher (bin/farm.sh: plain script, cron-friendly) ────────────┐
+tasks/inbox/*.md ───► │ worktree + branch per task → orchestrator → PR (bin/run-task.sh)               │ ──► GitHub PR
+  (repo: in each)     └────────────────────────────────────────────────────────────────────────────────┘
+                                   │
+         orchestrator ── backend-coder / frontend-coder / coder ──► tester ──► reviewer ──► docs-writer ──► commit
+                         (fails or changes requested → back to the owning coder, max 3 rounds)
 ```
 
-## Run
-Queue a task by writing a markdown file in `tasks/inbox/`, describing what to build and the acceptance criteria.
+## Agents (`agents/*.md`)
+| Agent | Role | Runs as |
+|---|---|---|
+| `orchestrator` | plans, delegates, loops, decides | main session (`claude --agent orchestrator`, or a farm run) |
+| `task-writer` | turns a rough idea into a precise task file in the inbox | main session (`claude --agent task-writer`) |
+| `backend-coder` | Python: ruff, mypy or pyright, pytest, docstrings | subagent |
+| `frontend-coder` | Next.js, React, TypeScript, accessibility, frontend-design skill | subagent |
+| `coder` | everything else | subagent |
+| `tester` | writes and runs tests, then reports PASS or FAIL | subagent |
+| `reviewer` | read-only review, then APPROVE or CHANGES REQUESTED | subagent |
+| `docs-writer` | changelog.md and README (on Haiku, the cheapest model) | subagent |
 
-```bash
-bin/farm.sh ~/path/to/repo        # process the inbox, 2 agents in parallel
-bin/farm.sh ~/path/to/repo 1      # one at a time (gentlest on Pro limits)
-bin/run-task.sh ~/repo task.md    # run a single task file directly
-MODEL=opus bin/farm.sh ~/repo     # stronger model for hard tasks (uses more quota)
-```
-
-## Results
-- `logs/<id>.report.md`: the orchestrator's report (STATUS line, summary, tests, follow-ups)
-- `tasks/done/` and `tasks/failed/`: finished tasks
-- Code: branch `agent/<id>` in the target repo; the working copy is at `worktrees/<id>`
-
-Merge the work and clean up:
-```bash
-git -C ~/repo merge agent/<id>
-git -C ~/repo worktree remove ~/agents/worktrees/<id>
-git -C ~/repo branch -d agent/<id>
-```
-
-## Customize
-- `prompts/orchestrator.md`: process and hard rules (no push, no merge, etc.)
-- `agents/*.md`: subagents. Add a file such as `reviewer.md` with `description:` frontmatter to add a role, then mention it in the orchestrator prompt.
-
-## Agent profiles everywhere
-`agents/coder.md` and `agents/tester.md` are linked into `~/.claude/agents/`, so every Claude Code session (VS Code, desktop, CLI) can delegate to them as subagents. Edit them here: the farm and your IDE both use the same file. To set them up on a new machine:
+Each agent reads its own skills from `~/skills` (the [skills repo](https://github.com/mochkai/skills)) when it starts. The profiles are also linked into `~/.claude/agents/`, so the same agents work in VS Code, the desktop app and the CLI. On a new machine:
 ```bash
 mkdir -p ~/.claude/agents && ln -sfn ~/agents/agents/*.md ~/.claude/agents/
 ```
 
-## Shared AGENTS.md
-`templates/AGENTS.md` holds the master copy of the rules file that belongs in the root of every repo.
+## Queue a task
+Use `claude --agent task-writer` (recommended), or write `tasks/inbox/<slug>.md` yourself:
+```markdown
+---
+repo: ~/code/my-app
+title: Add password reset flow
+type: backend | frontend | fullstack | other
+---
+## Goal / ## Requirements / ## Acceptance criteria / ## Out of scope / ## Notes
+```
 
-## Skills
-Agents use the skills committed in the target repo's `.claude/skills/`. Copy them there from `~/skills`. To preload a skill into a role, add `skills: name1, name2` to that agent's frontmatter in `agents/*.md`.
+## Run
+```bash
+bin/farm.sh                 # dispatch the whole inbox, 2 at a time, across all repos
+bin/farm.sh 1               # one at a time (gentlest on Pro limits)
+bin/run-task.sh task.md     # run a single task file directly
+MODEL=opus bin/farm.sh      # stronger model for hard tasks (uses more quota)
+PR=0 bin/farm.sh            # keep the results on local branches, no PR
+bin/cleanup.sh [--dry-run]  # remove worktrees whose PR was merged or closed
+```
+To run it automatically every 15 minutes, add this with `crontab -e`. In WSL, cron must be running: `sudo service cron start`.
+```
+*/15 * * * * cd ~/agents && bin/farm.sh >> logs/cron.log 2>&1; cd ~/agents && bin/cleanup.sh >> logs/cron.log 2>&1
+```
+
+## What happens to a task
+- **Success:** the tester passed and the reviewer approved. The branch is pushed and a PR is opened, with the run report as its description (GitHub remotes only; otherwise the work stays on the local branch).
+- **Failure:** the task moves to `tasks/failed/`, and the report explains why.
+- **Usage limit hit:** the task goes back to the inbox and dispatching pauses for 60 minutes (`PAUSE_MINUTES`).
+- **Reports:** `logs/<id>.report.md`. Code: branch `agent/<id>`, working copy in `worktrees/<id>`.
+
+## Status (for a dashboard, Linear or a database later)
+Every state change is recorded by `bin/status.js`:
+- `state/events.jsonl`: an append-only event log (`started`, `done`, `failed`, `requeued`, `cleaned`)
+- `state/status.json`: a snapshot with the machine, the number of running agents, and each task's state and PR
+- `STATUS_HOOK='my-sync-script'`: run for every event, with the event JSON on stdin. This is where a Linear, database or webhook adapter plugs in.
+
+`node bin/status.js show` prints the current state.
 
 ## Safety
-Runs use `PERMISSION_MODE=auto`: risky commands are blocked automatically. Only use `bypassPermissions` inside a Docker container.
+- Runs use `PERMISSION_MODE=auto`, which blocks risky commands automatically. Use `bypassPermissions` only inside a Docker container.
+- Agents never push or merge. Only the script pushes, and only to its own `agent/*` branch. You merge.
