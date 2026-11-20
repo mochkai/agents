@@ -19,10 +19,8 @@ for (const file of fs.readdirSync(dir).filter((f) => f.endsWith(".md"))) {
   const agent = { description: meta.description, prompt: m[2].trim() };
   if (meta.model && meta.model !== "inherit") agent.model = meta.model;
   if (meta.tools) agent.tools = meta.tools.split(",").map((t) => t.trim());
-  // skills: comma list; bare names refer to the my-skills library (~/skills)
-  if (meta.skills)
-    agent.skills = meta.skills.split(",").map((s) => s.trim()).filter(Boolean)
-      .map((s) => (s.includes(":") ? s : `my-skills:${s}`));
+  // skills: comma list of skill names to preload; they must be attached to the target project
+  if (meta.skills) agent.skills = meta.skills.split(",").map((s) => s.trim()).filter(Boolean);
   out[path.basename(file, ".md")] = agent;
 }
 process.stdout.write(JSON.stringify(out, null, 2));

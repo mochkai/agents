@@ -5,7 +5,6 @@
 #   MODEL=sonnet            model for orchestrator + subagents (sonnet is lighter on Pro limits; opus is stronger)
 #   TIMEOUT=3600            max seconds per task
 #   PERMISSION_MODE=auto    auto | acceptEdits | bypassPermissions (bypass only inside a container!)
-#   SKILLS_DIR=~/skills     skill library loaded as a plugin (skills are named my-skills:<name>)
 set -euo pipefail
 
 FARM="$(cd "$(dirname "$0")/.." && pwd)"
@@ -14,8 +13,6 @@ die() { echo "ERROR: $*" >&2; exit 2; }
 [ $# -eq 2 ] || die "usage: $0 <repo-path> <task-file.md>"
 REPO="$(realpath "$1")"; TASK="$(realpath "$2")"
 MODEL="${MODEL:-sonnet}"; TIMEOUT="${TIMEOUT:-3600}"; PERM="${PERMISSION_MODE:-auto}"
-SKILLS_DIR="${SKILLS_DIR:-$HOME/skills}"
-PLUGIN_ARGS=(); [ -f "$SKILLS_DIR/.claude-plugin/plugin.json" ] && PLUGIN_ARGS=(--plugin-dir "$SKILLS_DIR")
 
 [ -f "$TASK" ] || die "task file not found: $TASK"
 git -C "$REPO" rev-parse --verify -q HEAD >/dev/null || die "$REPO is not a git repo with at least one commit"
@@ -27,6 +24,11 @@ ID="$(date +%Y%m%d-%H%M%S)-$NAME"
 BRANCH="agent/$ID"
 WT="$FARM/worktrees/$ID"
 LOG="$FARM/logs/$ID"
+
+# Skills are per project: agents see only what is committed in <repo>/.claude/skills
+if [ -n "$(git -C "$REPO" status --porcelain -- .claude/skills .claude/skills.lock.json 2>/dev/null)" ]; then
+  echo "WARNING: $REPO has uncommitted changes in .claude/skills; agents will NOT see them (commit first)" >&2
+fi
 
 # Isolated worktree + branch per task, so parallel agents never collide
 BASE="$(git -C "$REPO" rev-parse --short HEAD)"
@@ -41,7 +43,6 @@ set +e
     --agents "$LOG.agents.json" \
     --permission-mode "$PERM" \
     --model "$MODEL" \
-    "${PLUGIN_ARGS[@]}" \
     --output-format json < /dev/null ) > "$LOG.json" 2> "$LOG.err"
 RC=$?
 set -e

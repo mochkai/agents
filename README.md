@@ -33,7 +33,7 @@ git -C ~/repo branch -d agent/<id>
 - `agents/*.md`: subagents. Add a file such as `reviewer.md` with `description:` frontmatter to add a role, then mention it in the orchestrator prompt.
 
 ## Skills
-Skills come from `~/skills` (a separate repo, loaded as the `my-skills` plugin). To preload skills into a role, add `skills: name1, name2` to that agent's frontmatter in `agents/*.md`.
+Skills are attached **per project** from the `~/skills` library, for example `~/skills/bin/skills attach ~/repo code-review-checklist`. Commit them in that repo. Agents only see skills committed in the target repo's `.claude/skills/`. To preload skills into a role, add `skills: name1, name2` to that agent's frontmatter in `agents/*.md` (the skills must be attached to the project).
 
 ## Safety
 Runs use `PERMISSION_MODE=auto`: risky commands are blocked automatically. Only use `bypassPermissions` inside a Docker container.
