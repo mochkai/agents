@@ -32,5 +32,8 @@ git -C ~/repo branch -d agent/<id>
 - `prompts/orchestrator.md`: process and hard rules (no push, no merge, etc.)
 - `agents/*.md`: subagents. Add a file such as `reviewer.md` with `description:` frontmatter to add a role, then mention it in the orchestrator prompt.
 
+## Skills
+Skills come from `~/skills` (a separate repo, loaded as the `my-skills` plugin). To preload skills into a role, add `skills: name1, name2` to that agent's frontmatter in `agents/*.md`.
+
 ## Safety
 Runs use `PERMISSION_MODE=auto`: risky commands are blocked automatically. Only use `bypassPermissions` inside a Docker container.
