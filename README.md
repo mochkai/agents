@@ -59,6 +59,16 @@ To run it automatically every 15 minutes, add this with `crontab -e`. In WSL, cr
 - **Usage limit hit:** the task goes back to the inbox and dispatching pauses for 60 minutes (`PAUSE_MINUTES`).
 - **Reports:** `logs/<id>.report.md`. Code: branch `agent/<id>`, working copy in `worktrees/<id>`.
 
+## Monitor
+```bash
+bin/watch.sh        # live view, refreshes every 5 s (Ctrl+C to exit); bin/watch.sh 2 for every 2 s
+node bin/watch.js   # print once
+```
+For each running task it shows how long it has been running, the agents called so far (`coder → tester → reviewer`), which agent is active right now, and its last action (the file it's reading, the command it's running). It also shows the queue size, any usage-limit pause, and the last 5 finished tasks with their PR links.
+- A **red dot** means the runner process died (crash or kill). Check `logs/<id>.err`.
+- **⚠ no activity for Xm** appears after 10 minutes with no activity (`STALE_MINUTES` changes this): either stuck, or waiting on a long command.
+- It only reads local files and makes no API calls, so it doesn't use your Pro limits.
+
 ## Status (for a dashboard, Linear or a database later)
 Every state change is recorded by `bin/status.js`:
 - `state/events.jsonl`: an append-only event log (`started`, `done`, `failed`, `requeued`, `cleaned`)
