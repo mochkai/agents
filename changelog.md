@@ -4,6 +4,9 @@ All notable changes to the agent farm are documented here. The format follows [K
 
 ## [Unreleased]
 
+### Fixed
+- `cleaned` status events now remove the task from `state/status.json`. Previously they left an empty entry behind.
+
 ### Added
 - `SCOPE` section in `templates/AGENTS.md`. It makes the global rules safe for subagents (coders implement directly) and for unattended farm runs (no questions), and limits framework-specific rules to the projects that use them.
 - Live farm monitor (`bin/watch.sh`): shows the active agent, its last action, and stuck or crashed tasks.
