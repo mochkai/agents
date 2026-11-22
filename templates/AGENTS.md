@@ -1,5 +1,12 @@
 # CRITICAL RULES - MUST FOLLOW
 
+## SCOPE
+
+- These rules are written for the main session working with a human.
+- If you are a subagent with a defined role (coder, tester, reviewer, docs-writer), your role instructions take precedence where they conflict. Coders implement directly; only the main session delegates.
+- In unattended runs (the task starts with `MODE: unattended`), never ask questions: make the most reasonable decision and record it in your report.
+- Framework-specific rules (Drizzle, `next build`, DESIGN.md) apply only to projects that use them.
+
 ## RESPONSES
 
 - Keep responses concise and to the point - unless the user asks otherwise
