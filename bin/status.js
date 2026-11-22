@@ -37,7 +37,10 @@ function record(type, fields) {
   fs.appendFileSync(EVENTS, JSON.stringify(event) + "\n");
 
   const snap = readSnapshot();
-  if (event.id) {
+  if (event.id && type === "cleaned") {
+    // Cleaned-up tasks leave the snapshot; their history stays in events.jsonl
+    delete snap.tasks[event.id];
+  } else if (event.id) {
     const prev = snap.tasks[event.id] || {};
     const state = ["started", "done", "failed", "requeued"].includes(type) ? type : prev.state;
     snap.tasks[event.id] = { ...prev, ...fields, state, updated: event.ts };
