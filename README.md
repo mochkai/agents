@@ -108,6 +108,7 @@ PM replies are saved as `logs/<id>.pm-r<round>.md`. Every notification is append
    account default : gmail
    ```
 4. `cp .env.example .env`, then set `NOTIFY_EMAIL` (and optionally `NOTIFY_ON`, `MSMTP_ACCOUNT`). `.env` is git-ignored.
+   - **Recognise farm emails at a glance:** they arrive from the sender name **"Agent Farm"** (`NOTIFY_FROM_NAME`) with subjects starting `[agent-farm]`. Using a Gmail +alias as `NOTIFY_EMAIL` (for example `you+agentfarm@gmail.com`) also lets you add a Gmail filter on `to:you+agentfarm@gmail.com` that labels or stars them. The sender address defaults to `NOTIFY_EMAIL` without the `+tag` (your Gmail account); override it with `NOTIFY_FROM`.
 5. Test: `echo hello | bin/notify.sh ready "test" -`
 
 Without msmtp or `NOTIFY_EMAIL`, notifications are only logged, with the warning "email not configured: see README".

@@ -4,6 +4,12 @@ All notable changes to the agent farm are documented here. The format follows [K
 
 ## [Unreleased]
 
+### Added
+- Notification emails come from the sender name "Agent Farm" (`NOTIFY_FROM_NAME`, `NOTIFY_FROM`). The README documents using a Gmail +alias and filter to label them.
+
+### Security
+- `notify.sh` strips control characters from header values, so a task title containing a newline can't inject email headers.
+
 ### Changed
 - Interactive orchestrator always works on a new feature branch, pushes only that branch, and asks before pushing anything else (review of #5).
 - Farm runs that fail or time out but leave commits on their branch are now pushed and opened as a **draft** PR titled `[WIP] <title>` (report plus a note that it did not pass tests or review). No project-manager step or notification for drafts. Runs without commits are unchanged, and `PR=0` still pushes nothing. The status event records the PR URL and `draft`.
