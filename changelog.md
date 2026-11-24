@@ -5,6 +5,7 @@ All notable changes to the agent farm are documented here. The format follows [K
 ## [Unreleased]
 
 ### Changed
+- Interactive orchestrator always works on a new feature branch, pushes only that branch, and asks before pushing anything else (review of #5).
 - Farm runs that fail or time out but leave commits on their branch are now pushed and opened as a **draft** PR titled `[WIP] <title>` (report plus a note that it did not pass tests or review). No project-manager step or notification for drafts. Runs without commits are unchanged, and `PR=0` still pushes nothing. The status event records the PR URL and `draft`.
 - A failed (or timed-out) fix round with new commits now pushes them to the existing PR branch and comments its report as `## Fix round <n> report (orchestrator): FAILED`, then notifies `needs_human` as before (the notification now includes the PR link and says whether the push failed). The project manager never runs for failed rounds, and a usage-limit requeue still resets the branch without pushing.
 - Interactive orchestrator sessions now end with a PR: after review it pushes its feature branch and opens a PR (a draft if the review did not pass) with summary, tests, review verdict and merge confidence, and gives the human the link. Hard rules: agents still never merge; only in interactive mode may the orchestrator push its own branch.

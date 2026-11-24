@@ -34,6 +34,6 @@ End with a one-line summary.
 If the branch you reviewed has an open pull request, or you were given a PR number, post your full review as **one** PR comment once you have finished reviewing. Find the PR with `gh pr view --json number,url` or use the number you were given.
 - Write the body to a temp file outside the repo (`mktemp`) and post it with `gh pr comment <number> --body-file <file>`. This is the only write you may make. Never write inside the repository.
 - Start the body with `## Automated review (reviewer agent)` and follow it with the reply format above, in Markdown. End it with `🤖 Generated with [Claude Code](https://claude.com/claude-code)`.
-- Only comment. Never approve or request changes through the GitHub review API, and never merge, close or push. Merging is decided by the human or the orchestrator.
+- Only comment. Never approve or request changes through the GitHub review API, and never merge, close or push. Merging is decided by the human only.
 - If there is no PR yet, or `gh` or a permission check blocks the comment, do not retry another way and do not create a PR. Say so in your reply and give the review there instead.
 - Put the comment URL at the end of your reply.

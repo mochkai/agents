@@ -187,7 +187,7 @@ fi
 #   failed fix round, no commits  -> nothing to push, needs_human (below)
 # A usage-limit requeue never gets here: it resets the branch and exits above, so it never pushes.
 PR_URL=""; PUSH_FAILED=0; DRAFT=0; FIX_PUSH=0
-if [ "$PR" = 1 ] && [ "$STATUS" = failed ] && [ -z "$EXISTING_PR" ] \
+if [ "$PR" = 1 ] && [ "$STATUS" = failed ] && [ -z "$EXISTING_PR" ] && [ -z "$FIX_BRANCH" ] \
    && [ "$(git -C "$REPO" rev-list --count "$BASE..$BRANCH" 2>/dev/null || echo 0)" -gt 0 ]; then
   DRAFT=1
 fi
@@ -220,14 +220,14 @@ if [ "$PR" = 1 ] && { [ "$STATUS" = done ] || [ "$DRAFT" = 1 ] || [ "$FIX_PUSH" 
          && PR_URL="$(cd "$REPO" && gh pr create --draft --head "$BRANCH" --base "$BASE_BRANCH" --title "[WIP] $TITLE" --body-file "$LOG.pr.md" 2>>"$LOG.err" | tail -1)"; then
         echo "[$ID] draft PR opened: $PR_URL"
       else
-        echo "[$ID] WARNING: could not open a draft PR (see $LOG.err); the branch is still local" >&2
+        echo "[$ID] WARNING: could not open a draft PR (see $LOG.err); if the push succeeded the branch is on GitHub without a PR" >&2
         PR_URL=""; DRAFT=0
       fi
     elif git -C "$REPO" push -q -u origin "$BRANCH" 2>>"$LOG.err" \
        && PR_URL="$(cd "$REPO" && gh pr create --head "$BRANCH" --base "$BASE_BRANCH" --title "$TITLE" --body-file "$LOG.pr.md" 2>>"$LOG.err" | tail -1)"; then
       echo "[$ID] PR opened: $PR_URL"
     else
-      echo "[$ID] WARNING: could not open a PR (see $LOG.err); the branch is still local" >&2
+      echo "[$ID] WARNING: could not open a PR (see $LOG.err); if the push succeeded the branch is on GitHub without a PR" >&2
       PR_URL=""
     fi
   else
