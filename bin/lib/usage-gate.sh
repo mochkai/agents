@@ -43,7 +43,6 @@ set_pause() {
 usage_gate() {
   local json verdict window percent limit until reset effective note=""
   farm_config "$FARM"
-  [[ "${PAUSE_MINUTES:-}" =~ ^[0-9]+$ ]] || PAUSE_MINUTES=60
   if ! json="$("$FARM/bin/usage.sh" --json)"; then
     echo "WARNING: usage check failed; starting anyway" >&2
     return 0
@@ -62,7 +61,7 @@ usage_gate() {
       return until > now ? [{ label, percent: Number(w.percent), limit, until, reset: "known" }] : [];
     }).sort((a, b) => b.until - a.until);
     if (over.length) { const o = over[0]; console.log(`${o.label} ${o.percent} ${o.limit} ${o.until} ${o.reset}`); }
-  ' "$USAGE_LIMIT_5H" "$USAGE_LIMIT_WEEK" "$PAUSE_MINUTES")" \
+  ' "$USAGE_LIMIT_5H" "$USAGE_LIMIT_WEEK" "$(pause_minutes)")" \
     || { echo "WARNING: could not evaluate the usage reading; starting anyway" >&2; return 0; }
   [ -n "$verdict" ] || return 0
 

@@ -137,9 +137,9 @@ if git -C "$DIR" merge-base --is-ancestor "origin/$T" "origin/$C_BRANCH"; then
 fi
 
 # --- 2. Safety check: T holds exactly P's content ------------------------------------------------------
-if ! git -C "$DIR" diff --quiet "origin/$T" "$P_HEAD"; then
+if ! git -C "$DIR" diff --quiet --no-ext-diff --no-textconv "origin/$T" "$P_HEAD"; then
   echo "origin/$T differs from #$P's merged head ${P_HEAD:0:9}:" >&2
-  git -C "$DIR" diff --stat "$P_HEAD" "origin/$T" >&2 || true
+  git -C "$DIR" diff --no-ext-diff --stat "$P_HEAD" "origin/$T" >&2 || true
   abort "$T has changes beyond #$P (something else was merged), so a content-preserving restack is not safe. Merge or rebase origin/$T into $C_BRANCH normally and resolve the conflicts."
 fi
 echo "check  origin/$T has exactly #$P's content: OK"
@@ -147,15 +147,15 @@ echo "check  origin/$T has exactly #$P's content: OK"
 # --- 3. Merge -s ours in a temporary worktree and verify C's diff is unchanged --------------------------
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/restack-$C.XXXXXX")"
 WT="$TMP/wt"
-cleanup() { git -C "$DIR" worktree remove --force "$WT" >/dev/null 2>&1 || true; rm -rf "$TMP"; }
+cleanup() { git -C "$DIR" worktree remove --force "$WT" >/dev/null 2>&1 || true; rm -rf "$TMP"; git -C "$DIR" worktree prune 2>/dev/null || true; }
 trap cleanup EXIT
 # Detached at the branch tip, so no local branch (and not your checkout) is touched
 git -C "$DIR" worktree add -q --detach "$WT" "origin/$C_BRANCH" || abort "could not create a temporary worktree"
 C_TIP="$(git -C "$WT" rev-parse HEAD)"
 MSG="Merge $T into $C_BRANCH (restack after #$P was rebased; content unchanged)"
 git -C "$WT" merge -q --no-edit -s ours "origin/$T" -m "$MSG" >/dev/null || abort "git merge -s ours failed"
-git -C "$DIR" diff --binary "origin/$T" "$(git -C "$WT" rev-parse HEAD)" > "$TMP/after.diff"
-git -C "$DIR" diff --binary "$P_HEAD" "$C_HEAD" > "$TMP/before.diff"
+git -C "$DIR" diff --no-ext-diff --no-textconv --binary "origin/$T" "$(git -C "$WT" rev-parse HEAD)" > "$TMP/after.diff"
+git -C "$DIR" diff --no-ext-diff --no-textconv --binary "$P_HEAD" "$C_HEAD" > "$TMP/before.diff"
 if ! cmp -s "$TMP/after.diff" "$TMP/before.diff"; then
   echo "diff of the restacked branch against origin/$T differs from #$C's diff against #$P's head:" >&2
   diff "$TMP/before.diff" "$TMP/after.diff" | head -40 >&2 || true

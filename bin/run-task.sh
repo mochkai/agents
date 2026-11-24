@@ -5,7 +5,7 @@
 # NEVER MERGES: this script only pushes the task's own branch and opens or updates a PR; a human merges.
 # (The only merge here is `merge --ff-only origin/$BRANCH` on the agent's own branch in a fix round.)
 # A new PR whose base is not the repo's default branch is stacked: bin/pr-stack-label.sh prepends a merge
-# hint to its description and adds the `stacked` label (a failure there only warns).
+# hint to its description and adds the `stacked` label, on it and on its parent (a failure there only warns).
 # The repo comes from the task's frontmatter (`repo: ~/code/app`) unless it is given as an argument.
 # Fix rounds (queued by bin/pm.sh) add `branch:`, `pr:`, `round:` and `base_branch:` to the frontmatter:
 # the run then continues that branch (reusing its worktree when there is one) and updates the existing PR.
@@ -257,8 +257,8 @@ if [ "$PR" = 1 ] && { [ "$STATUS" = done ] || [ "$DRAFT" = 1 ] || [ "$FIX_PUSH" 
     DRAFT=0; FIX_PUSH=0
   fi
 fi
-# A new PR (normal or draft) on a base other than the default branch is stacked: merge hint + `stacked` label.
-# A one-off PR on the default branch is left unchanged. Labelling never fails the run.
+# Mark a new PR (normal or draft) that is part of a stack: merge hints + `stacked` label on it and its parent.
+# A one-off PR (default branch, nothing on top) is left unchanged. Labelling never fails the run.
 if [ -n "$PR_URL" ] && [ -z "$EXISTING_PR" ]; then
   "$FARM/bin/pr-stack-label.sh" "$PR_URL" "$REPO" 2>>"$LOG.err" | sed "s/^/[$ID] /" \
     || echo "[$ID] WARNING: could not mark $PR_URL as stacked (see $LOG.err)" >&2
