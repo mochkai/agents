@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
-# Run ONE coding task autonomously, then open a PR if it passed tests and review.
+# Run ONE coding task autonomously, then open a PR for human review: a normal PR if it passed tests and
+# review, a draft `[WIP] <title>` PR if it failed (or timed out) but left commits on its branch.
 #   usage: bin/run-task.sh <task-file.md> [repo-path]
+# NEVER MERGES: this script only pushes the task's own branch and opens or updates a PR; a human merges.
+# (The only merge here is `merge --ff-only origin/$BRANCH` on the agent's own branch in a fix round.)
 # The repo comes from the task's frontmatter (`repo: ~/code/app`) unless it is given as an argument.
 # Fix rounds (queued by bin/pm.sh) add `branch:`, `pr:`, `round:` and `base_branch:` to the frontmatter:
 # the run then continues that branch (reusing its worktree when there is one) and updates the existing PR.
@@ -13,7 +16,7 @@
 #   MODEL=sonnet            model for the orchestrator and subagents (docs-writer always uses haiku)
 #   TIMEOUT=3600            max seconds per task
 #   PERMISSION_MODE=auto    auto | acceptEdits | bypassPermissions (bypass only inside a container!)
-#   PR=1                    push the branch and open a GitHub PR on success (0 = keep the local branch only)
+#   PR=1                    push the branch and open a GitHub PR (draft if failed; 0 = keep the local branch only)
 #   PM=1                    after a PR is opened or updated, run the project manager (bin/pm.sh; 0 = skip)
 #   STATUS_HOOK=<cmd>       command run with each status event as JSON on stdin (see bin/status.js)
 #
@@ -149,7 +152,7 @@ node -e '
   const fs = require("fs");
   let r = {};
   try { r = JSON.parse(fs.readFileSync(process.argv[1], "utf8")); } catch {}
-  fs.writeFileSync(process.argv[2], (r.result || "STATUS: FAILED\n\nNo result (crash, timeout or usage limit). See .err log.") + "\n");
+  fs.writeFileSync(process.argv[2], (r.result || "STATUS: FAILED\n\nNo result: the run crashed, timed out or was stopped. See the .err log.") + "\n");
 ' "$LOG.json" "$LOG.report.md"
 
 # Hit the Pro usage limit? Put the task back in the queue and pause dispatching for a while.
@@ -176,11 +179,27 @@ else
   [ $RC -eq 124 ] && echo "(timed out after ${TIMEOUT}s)" >> "$LOG.report.md"
 fi
 
-# Open a PR (success only, GitHub remotes only). Agents never push; this script does.
-PR_URL=""; PUSH_FAILED=0
-if [ "$STATUS" = done ] && [ "$PR" = 1 ]; then
+# Open a PR (GitHub remotes only). Agents never push; this script does, and it never merges.
+#   success                       -> push + PR (fix round: push to the existing PR + comment)
+#   failed, new task, has commits -> push + draft PR "[WIP] <title>" (no PM step, no notification)
+#   failed, new task, no commits  -> nothing to push
+#   failed fix round with commits -> push to the existing PR + "FAILED" report comment, then needs_human (below)
+#   failed fix round, no commits  -> nothing to push, needs_human (below)
+# A usage-limit requeue never gets here: it resets the branch and exits above, so it never pushes.
+PR_URL=""; PUSH_FAILED=0; DRAFT=0; FIX_PUSH=0
+if [ "$PR" = 1 ] && [ "$STATUS" = failed ] && [ -z "$EXISTING_PR" ] \
+   && [ "$(git -C "$REPO" rev-list --count "$BASE..$BRANCH" 2>/dev/null || echo 0)" -gt 0 ]; then
+  DRAFT=1
+fi
+# A failed fix round still publishes its own new commits (beyond START) to the PR's branch
+if [ "$PR" = 1 ] && [ "$STATUS" = failed ] && [ -n "$EXISTING_PR" ] \
+   && [ "$(git -C "$REPO" rev-list --count "$START..$BRANCH" 2>/dev/null || echo 0)" -gt 0 ]; then
+  FIX_PUSH=1
+fi
+if [ "$PR" = 1 ] && { [ "$STATUS" = done ] || [ "$DRAFT" = 1 ] || [ "$FIX_PUSH" = 1 ]; }; then
   if git -C "$REPO" remote get-url origin 2>/dev/null | grep -q 'github.com'; then
     { tail -n +2 "$LOG.report.md"
+      [ "$DRAFT" = 1 ] && printf '\n> **Draft:** this run did not pass tests and review (STATUS: FAILED). The branch holds its partial work for a human to finish or close.\n'
       printf '\n---\nTask: `%s` · Branch: `%s`\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n' "$NAME" "$BRANCH"
     } > "$LOG.pr.md"
     if [ -n "$EXISTING_PR" ]; then
@@ -188,12 +207,21 @@ if [ "$STATUS" = done ] && [ "$PR" = 1 ]; then
       if git -C "$REPO" push -q -u origin "$BRANCH" 2>>"$LOG.err"; then
         PR_URL="$EXISTING_PR"
         echo "[$ID] PR updated: $PR_URL"
-        { printf '## Fix round %s report (orchestrator)\n\n' "$ROUND"; cat "$LOG.pr.md"; } > "$LOG.pr-comment.md"
+        { printf '## Fix round %s report (orchestrator)%s\n\n' "$ROUND" "$([ "$STATUS" = failed ] && echo ': FAILED')"
+          cat "$LOG.pr.md"; } > "$LOG.pr-comment.md"
         (cd "$REPO" && gh pr comment "$PR_URL" --body-file "$LOG.pr-comment.md" >/dev/null 2>>"$LOG.err") \
           || echo "[$ID] WARNING: could not comment the fix-round report on the PR (see $LOG.err)" >&2
       else
         echo "[$ID] WARNING: could not push $BRANCH to update $EXISTING_PR (see $LOG.err)" >&2
         PUSH_FAILED=1
+      fi
+    elif [ "$DRAFT" = 1 ]; then
+      if git -C "$REPO" push -q -u origin "$BRANCH" 2>>"$LOG.err" \
+         && PR_URL="$(cd "$REPO" && gh pr create --draft --head "$BRANCH" --base "$BASE_BRANCH" --title "[WIP] $TITLE" --body-file "$LOG.pr.md" 2>>"$LOG.err" | tail -1)"; then
+        echo "[$ID] draft PR opened: $PR_URL"
+      else
+        echo "[$ID] WARNING: could not open a draft PR (see $LOG.err); the branch is still local" >&2
+        PR_URL=""; DRAFT=0
       fi
     elif git -C "$REPO" push -q -u origin "$BRANCH" 2>>"$LOG.err" \
        && PR_URL="$(cd "$REPO" && gh pr create --head "$BRANCH" --base "$BASE_BRANCH" --title "$TITLE" --body-file "$LOG.pr.md" 2>>"$LOG.err" | tail -1)"; then
@@ -204,21 +232,26 @@ if [ "$STATUS" = done ] && [ "$PR" = 1 ]; then
     fi
   else
     echo "[$ID] no GitHub remote: skipping PR, work is on local branch $BRANCH"
+    DRAFT=0; FIX_PUSH=0
   fi
 fi
 
 # Move the task out of tasks/running if it came from the queue
 FINISHED="$LOG.task.md"
 case "$TASK" in "$FARM/tasks/running/"*) mv "$TASK" "$FARM/tasks/$STATUS/$ID.md"; FINISHED="$FARM/tasks/$STATUS/$ID.md" ;; esac
-status "$STATUS" id="$ID" pr="$PR_URL" report="$LOG.report.md"
+status "$STATUS" id="$ID" pr="$PR_URL" draft="$DRAFT" report="$LOG.report.md"
 
 echo "[$ID] $STATUS  report=$LOG.report.md"
 [ -z "$PR_URL" ] && echo "        review:  git -C $REPO log --stat $BASE..$BRANCH   (or open $WT)"
 
 # A fix round that failed, or could not update its PR, is a dead end without a human
 if [ -n "$EXISTING_PR" ] && { [ "$STATUS" = failed ] || [ "$PUSH_FAILED" = 1 ]; }; then
-  { printf 'Fix round %s for %s %s.\nBranch: %s (worktree %s)\nReport: %s\n\n' "$ROUND" "$EXISTING_PR" \
-      "$([ "$PUSH_FAILED" = 1 ] && echo "succeeded but could not be pushed (see $LOG.err)" || echo failed)" "$BRANCH" "$WT" "$LOG.report.md"
+  if [ "$STATUS" = done ]; then outcome="succeeded but could not be pushed (see $LOG.err)"
+  elif [ "$PUSH_FAILED" = 1 ]; then outcome="failed, and pushing its commits failed too (see $LOG.err)"
+  elif [ "$FIX_PUSH" = 1 ]; then outcome="failed; its commits were pushed to the PR and the report was commented on it"
+  else outcome="failed"; fi
+  { printf 'Fix round %s for %s %s.\nPR: %s\nBranch: %s (worktree %s)\nReport: %s\n\n' "$ROUND" "$EXISTING_PR" \
+      "$outcome" "$EXISTING_PR" "$BRANCH" "$WT" "$LOG.report.md"
     cat "$LOG.report.md"
   } | notify_human "Fix round $ROUND failed: $ORIG_TITLE"
 fi

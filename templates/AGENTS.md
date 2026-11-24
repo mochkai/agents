@@ -28,6 +28,7 @@
 - Always add doc block comments to functions so they can be turned into documentation. For complex functions, also add one-line explanations in the code itself.
 - Any changes should be made on their own branches and reviewed either by the human or the code review agent before being merged into the master branch.
 - Every change should be accompanied by an update to the project's changelog.md (if it does not have a changelog.md file, create one)
+- Push the branch and open a pull request on GitHub for review (a draft if the review did not pass). Never merge it yourself — the human merges.
 
 ## DATABASE SCHEMA CHANGES
 

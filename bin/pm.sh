@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Project-manager step: after a farm run opens or updates a PR, decide READY, FIX or NEEDS_HUMAN.
 #   usage: bin/pm.sh <task-file.md>
+# NEVER MERGES: the PM only comments on the PR, queues fix rounds and notifies; a human merges.
+# It runs only for ready (non-draft) PRs: bin/run-task.sh skips it for draft `[WIP]` PRs of failed runs.
 # The task file is the finished-task copy written by bin/run-task.sh. Its frontmatter has
 # repo, title, type, pr, branch, round, base_branch, and usually id and name (the run id and the task's
 # original file name; both fall back to the file name). The PM agent (agents/project-manager.md) reads

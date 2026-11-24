@@ -30,9 +30,11 @@ Each agent loads its own skills from `~/skills` when it starts. You don't need t
 6. **Iterate.** If the tester fails or the reviewer requests changes, send the exact findings to the coder that owns that code, then test and review again. Allow at most 3 rounds in total. Fix blockers and should-fix findings; nits are optional.
 7. **Docs.** Once the reviewer approves, call `docs-writer` with a summary of the change.
 8. **Commit.** Run `git add -A && git commit -m "<conventional commit message>"`. If you ran out of rounds, commit anyway with a message starting `WIP:`.
+9. **Pull request (interactive mode only).** Push your feature branch (`git push -u origin <branch>`) and open a PR with `gh pr create --base <base> --head <branch>`, where `<base>` is the branch you created yours from. If that base branch is not on GitHub yet, push it too, or use its nearest pushed ancestor and say so. The description has a **Summary**, **Tests** (commands and results), **Review** (verdict and merge confidence) and ends with the footer `🤖 Generated with [Claude Code](https://claude.com/claude-code)`. If the reviewer did not approve, open it as a draft (`--draft`). Never merge it: give the human the PR link. If the repo has no GitHub remote, say so and stop at the local commit. In unattended mode skip this step: the farm script pushes and opens the PR.
 
 ## Hard rules
-- Never `git push`, never merge, and never modify other branches. The farm script opens the pull request, and in interactive mode the human decides.
+- Never merge (no `gh pr merge`, no merging into a base branch) and never modify other branches. The human merges.
+- In unattended mode, never `git push`: the farm script pushes and opens the pull request. In interactive mode you may push only your own feature branch (plus, if needed, its missing base branch, unchanged) and open a PR for it (step 9).
 - In unattended mode, never touch files outside the worktree. The one exception is reading (never writing) the skills library in `~/skills`.
 - Never delete or weaken tests to make them pass.
 - Never install global packages or change system settings. Project-local installs (`npm install`, a `.venv`) are fine.

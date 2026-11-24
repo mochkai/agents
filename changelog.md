@@ -5,10 +5,16 @@ All notable changes to the agent farm are documented here. The format follows [K
 ## [Unreleased]
 
 ### Changed
+- Farm runs that fail or time out but leave commits on their branch are now pushed and opened as a **draft** PR titled `[WIP] <title>` (report plus a note that it did not pass tests or review). No project-manager step or notification for drafts. Runs without commits are unchanged, and `PR=0` still pushes nothing. The status event records the PR URL and `draft`.
+- A failed (or timed-out) fix round with new commits now pushes them to the existing PR branch and comments its report as `## Fix round <n> report (orchestrator): FAILED`, then notifies `needs_human` as before (the notification now includes the PR link and says whether the push failed). The project manager never runs for failed rounds, and a usage-limit requeue still resets the branch without pushing.
+- Interactive orchestrator sessions now end with a PR: after review it pushes its feature branch and opens a PR (a draft if the review did not pass) with summary, tests, review verdict and merge confidence, and gives the human the link. Hard rules: agents still never merge; only in interactive mode may the orchestrator push its own branch.
+- `templates/AGENTS.md`: new CHANGE / EDIT rule to push the branch and open a PR for review (a draft if the review did not pass) and never merge it yourself.
+- `bin/run-task.sh` and `bin/pm.sh` headers state explicitly that they never merge.
 - Orchestrator: the run report's Review section now includes the reviewer's merge-confidence percentage. In fix rounds the orchestrator continues the PR's existing branch instead of creating a new one.
 - Reviewer agent: replies now include a merge-confidence percentage, a quality-gate summary and a "Not verified" section. When the reviewed branch has an open PR, the reviewer also posts the full review as one PR comment. It never approves through the GitHub review API, and it never merges.
 
 ### Fixed
+- A run that timed out or crashed without a result was requeued as if it had hit the usage limit, because the fallback report text itself contained "usage limit". The text no longer matches, so such runs now fail (and open a draft PR when they have commits).
 - `cleaned` status events now remove the task from `state/status.json`. Previously they left an empty entry behind.
 
 ### Added

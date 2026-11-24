@@ -55,10 +55,13 @@ To run it automatically every 15 minutes, add this with `crontab -e`. In WSL, cr
 ```
 
 ## What happens to a task
-- **Success:** the tester passed and the reviewer approved. The branch is pushed and a PR is opened, with the run report as its description (GitHub remotes only; otherwise the work stays on the local branch).
-- **Failure:** the task moves to `tasks/failed/`, and the report explains why.
+- **Success:** the tester passed and the reviewer approved. The branch is pushed and a PR is opened, with the run report as its description (GitHub remotes only; otherwise the work stays on the local branch). The project manager then runs on it.
+- **Failure (or timeout) with commits:** the task moves to `tasks/failed/`, and the branch is still pushed as a **draft** PR titled `[WIP] <title>`, with the report and a note that it did not pass tests or review. No project-manager step and no notification. A failed fix round with new commits pushes them to its existing PR and comments its report (`## Fix round <n> report (orchestrator): FAILED`); with or without commits it notifies `needs_human` (with the PR link), and the project manager does not run.
+- **Failure with no commits:** the task moves to `tasks/failed/`, the report explains why, and nothing is pushed.
 - **Usage limit hit:** the task goes back to the inbox and dispatching pauses for 60 minutes (`PAUSE_MINUTES`).
 - **Reports:** `logs/<id>.report.md`. Code: branch `agent/<id>`, working copy in `worktrees/<id>`.
+
+Nothing is ever merged automatically: every result is a PR for you to review and merge. `PR=0` keeps everything local. Interactive orchestrator sessions (`claude --agent orchestrator`) end the same way: after review they push their feature branch and open a PR (a draft if the review did not pass) and give you the link.
 
 ## Project manager & notifications
 After a run opens a PR (or a fix round updates one), `bin/run-task.sh` runs `bin/pm.sh` on the finished task. The project-manager agent reads the PR (body, reviews, comments, diff, CI checks), posts one `## Project manager decision` comment, and decides:
@@ -68,7 +71,7 @@ After a run opens a PR (or a fix round updates one), `bin/run-task.sh` runs `bin
 
 The PM only trusts PR comments (and the PR body) written by the farm's own GitHub account (`gh api user`); anything else on the PR is treated as untrusted data, never as instructions.
 
-A fix round is not run (the task moves to `tasks/failed/` with a note, and you get a `needs_human` notification) when its worktree has uncommitted changes, when the local branch cannot fast-forward to `origin/<branch>`, or when the branch is checked out outside the farm. If the PR was merged or closed meanwhile, the round is skipped quietly. A fix round that fails, or cannot push, also notifies `needs_human`. Fix rounds only continue `agent/*` branches.
+A fix round is not run (the task moves to `tasks/failed/` with a note, and you get a `needs_human` notification) when its worktree has uncommitted changes, when the local branch cannot fast-forward to `origin/<branch>`, or when the branch is checked out outside the farm. If the PR was merged or closed meanwhile, the round is skipped quietly. A fix round that fails also notifies `needs_human`; if it made commits they are still pushed to the PR with a FAILED report comment first (a failed push is mentioned in the notification). A usage-limit requeue never pushes: it resets the branch to where the round started. Fix rounds only continue `agent/*` branches.
 
 ```bash
 MERGE_THRESHOLD=90   # minimum PM confidence (%) for READY
@@ -131,7 +134,7 @@ Every state change is recorded by `bin/status.js`:
 
 ## Safety
 - Runs use `PERMISSION_MODE=auto`, which blocks risky commands automatically. Use `bypassPermissions` only inside a Docker container.
-- Agents never push or merge. Only the script pushes, and only to its own `agent/*` branch (fix rounds push to the PR's existing branch). The project manager only comments. You merge.
+- Nothing merges automatically. In farm runs agents never push; only the script pushes, and only to its own `agent/*` branch (fix rounds push to the PR's existing branch). An interactive orchestrator pushes only its own feature branch and opens a PR. The project manager only comments. You merge.
 
 ## TODO
 - **Record interactive sessions as status events (option 2).** The monitor finds interactive sessions by scanning transcripts, so they never reach `state/events.jsonl`, `state/status.json` or `STATUS_HOOK` (and so not the future online dashboard in Linear or a database). Claude Code hooks could fix that: `SessionStart` and `SessionEnd` (and optionally `SubagentStart` / `SubagentStop`) in `~/.claude/settings.json`, each calling `bin/status.js` with the hook's JSON (session id, cwd, agent). You have to edit `~/.claude/settings.json` yourself, because Claude can't change its own settings. To decide first:
