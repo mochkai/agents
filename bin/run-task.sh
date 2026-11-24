@@ -4,6 +4,8 @@
 #   usage: bin/run-task.sh <task-file.md> [repo-path]
 # NEVER MERGES: this script only pushes the task's own branch and opens or updates a PR; a human merges.
 # (The only merge here is `merge --ff-only origin/$BRANCH` on the agent's own branch in a fix round.)
+# A new PR whose base is not the repo's default branch is stacked: bin/pr-stack-label.sh prepends a merge
+# hint to its description and adds the `stacked` label (a failure there only warns).
 # The repo comes from the task's frontmatter (`repo: ~/code/app`) unless it is given as an argument.
 # Fix rounds (queued by bin/pm.sh) add `branch:`, `pr:`, `round:` and `base_branch:` to the frontmatter:
 # the run then continues that branch (reusing its worktree when there is one) and updates the existing PR.
@@ -186,7 +188,7 @@ if [ $RC -ne 0 ] && grep -qiE 'usage limit|rate.?limit|limit reached|hit your li
   # Never shorten a longer pause (e.g. one set by the usage gate until a window resets)
   # shellcheck source=lib/usage-gate.sh
   source "$FARM/bin/lib/usage-gate.sh"
-  paused_until="$(set_pause "$(date -d "+${PAUSE_MINUTES:-60} minutes" +%s)")"
+  paused_until="$(set_pause "$(date -d "+$(pause_minutes) minutes" +%s)")"
   status requeued id="$ID" reason="usage limit"
   echo "[$ID] requeued: usage limit reached; dispatching paused until $(pause_time "$paused_until")"
   exit 3
@@ -254,6 +256,12 @@ if [ "$PR" = 1 ] && { [ "$STATUS" = done ] || [ "$DRAFT" = 1 ] || [ "$FIX_PUSH" 
     echo "[$ID] no GitHub remote: skipping PR, work is on local branch $BRANCH"
     DRAFT=0; FIX_PUSH=0
   fi
+fi
+# A new PR (normal or draft) on a base other than the default branch is stacked: merge hint + `stacked` label.
+# A one-off PR on the default branch is left unchanged. Labelling never fails the run.
+if [ -n "$PR_URL" ] && [ -z "$EXISTING_PR" ]; then
+  "$FARM/bin/pr-stack-label.sh" "$PR_URL" "$REPO" 2>>"$LOG.err" | sed "s/^/[$ID] /" \
+    || echo "[$ID] WARNING: could not mark $PR_URL as stacked (see $LOG.err)" >&2
 fi
 
 # Move the task out of tasks/running if it came from the queue

@@ -13,6 +13,12 @@ pause_time() {
   if [ $(( $1 - $(date +%s) )) -lt 72000 ]; then date -d @"$1" '+%H:%M'; else date -d @"$1" '+%a %H:%M'; fi
 }
 
+# Print PAUSE_MINUTES when it is a whole number, otherwise the default 60 (so "abc" can't write NaN).
+#   pause_minutes
+pause_minutes() {
+  if [[ "${PAUSE_MINUTES:-}" =~ ^[0-9]+$ ]]; then echo "$PAUSE_MINUTES"; else echo 60; fi
+}
+
 # Pause dispatching until <unix-seconds>, never shortening a longer pause already in state/paused-until.
 # Prints the pause that is in effect afterwards (the new one, or the longer existing one).
 #   set_pause <unix-seconds>
@@ -37,6 +43,7 @@ set_pause() {
 usage_gate() {
   local json verdict window percent limit until reset effective note=""
   farm_config "$FARM"
+  [[ "${PAUSE_MINUTES:-}" =~ ^[0-9]+$ ]] || PAUSE_MINUTES=60
   if ! json="$("$FARM/bin/usage.sh" --json)"; then
     echo "WARNING: usage check failed; starting anyway" >&2
     return 0
@@ -55,7 +62,7 @@ usage_gate() {
       return until > now ? [{ label, percent: Number(w.percent), limit, until, reset: "known" }] : [];
     }).sort((a, b) => b.until - a.until);
     if (over.length) { const o = over[0]; console.log(`${o.label} ${o.percent} ${o.limit} ${o.until} ${o.reset}`); }
-  ' "$USAGE_LIMIT_5H" "$USAGE_LIMIT_WEEK" "${PAUSE_MINUTES:-60}")" \
+  ' "$USAGE_LIMIT_5H" "$USAGE_LIMIT_WEEK" "$PAUSE_MINUTES")" \
     || { echo "WARNING: could not evaluate the usage reading; starting anyway" >&2; return 0; }
   [ -n "$verdict" ] || return 0
 

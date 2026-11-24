@@ -64,6 +64,17 @@ To run it automatically every 15 minutes, add this with `crontab -e`. In WSL, cr
 
 Nothing is ever merged automatically: every result is a PR for you to review and merge. `PR=0` keeps everything local. Interactive orchestrator sessions (`claude --agent orchestrator`) end the same way: after review they push their feature branch and open a PR (a draft if the review did not pass) and give you the link.
 
+## Pull requests & stacking
+- **One-off PR** (based on the default branch, depends on nothing else open): merge it with any button; "Rebase and merge" or "Squash and merge" keep the history linear.
+- **Stacked PR** (based on another open PR's branch, because it needs that work): merge the bottom of the stack first, and merge every stacked PR with **"Create a merge commit"**. That keeps the parent's commits (and SHAs) on the target branch, so the child still applies cleanly.
+- The GitHub repo **auto-deletes merged head branches**, so when a parent is merged GitHub retargets its children to the parent's target branch.
+- **The `stacked` label and merge hint:** when a PR's base is not the repo's default branch, `bin/run-task.sh` (normal and draft PRs) and the interactive orchestrator run `bin/pr-stack-label.sh <pr-url-or-number> [repo-dir]`. It starts the description with `` > **Stacked on #<n> (`<base>`).** Merge that PR first, then merge this one with **"Create a merge commit"**. `` (`#<n>` is the open PR whose head is `<base>`, left out when there is none) and adds the `stacked` label, creating it if needed. A PR on the default branch gets nothing. A labelling failure only warns. It uses the REST API (`gh api`), not `gh pr edit`, which fails on accounts hit by the "Projects (classic) is being deprecated" GraphQL error.
+- **`bin/restack.sh` (safety net):** if a stacked parent was merged with rebase or squash by mistake, its commits got new SHAs and the child shows conflicts although the content is the same. `bin/restack.sh [--dry-run] [--parent <pr>] <child-pr> [repo-dir]` repairs the child without rewriting it: it finds the merged parent and its target branch, checks that the target holds **exactly** the parent's merged content (otherwise it aborts: something else was merged, so merge or rebase normally), records the target as merged with `git merge -s ours` in a temporary worktree, checks that the child still changes exactly the same lines, then pushes the merge commit (never a force push), retargets the child via REST if needed and prints its mergeable state. `--dry-run` does every check and reports without pushing. It never touches any branch but the child's, and records a `restacked` status event.
+  ```bash
+  bin/restack.sh --dry-run 21 ~/code/my-app   # check: "check ... OK", "dry run: would push ... (no force)"
+  bin/restack.sh 21 ~/code/my-app             # push the merge commit, retarget #21, print its mergeable state
+  ```
+
 ## Usage limits
 Your Claude plan has two usage windows: a **5-hour** window and a **weekly** (7-day) window. The farm reads how much of each is used and stops starting new tasks before they run out, so the limits are not burnt by agents alone. They are shared with your own interactive sessions (the CLI, VS Code, the desktop app), which use the same windows.
 
@@ -154,7 +165,7 @@ For each running task it shows how long it has been running, the agents called s
 
 ## Status (for a dashboard, Linear or a database later)
 Every state change is recorded by `bin/status.js`:
-- `state/events.jsonl`: an append-only event log (`started`, `done`, `failed`, `requeued`, `cleaned`, `pm_decision`, `pm_fix`, `notified`, `notify_failed`, `usage`, `usage_pause`)
+- `state/events.jsonl`: an append-only event log (`started`, `done`, `failed`, `requeued`, `cleaned`, `pm_decision`, `pm_fix`, `notified`, `notify_failed`, `usage`, `usage_pause`, `restacked`)
 - `state/status.json`: a snapshot with the machine, the number of running agents, and each task's state and PR
 - `STATUS_HOOK='my-sync-script'`: run for every event, with the event JSON on stdin. This is where a Linear, database or webhook adapter plugs in.
 
