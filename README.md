@@ -117,7 +117,9 @@ node bin/watch.js   # print once
 For each running task it shows how long it has been running, the agents called so far (`coder → tester → reviewer`), which agent is active right now, and its last action (the file it's reading, the command it's running). It also shows the queue size, any usage-limit pause, and the last 5 finished tasks with their PR links.
 - A **red dot** means the runner process died (crash or kill). Check `logs/<id>.err`.
 - **⚠ no activity for Xm** appears after 10 minutes with no activity (`STALE_MINUTES` changes this): either stuck, or waiting on a long command.
-- It only reads local files and makes no API calls, so it doesn't use your Pro limits.
+- **Interactive sessions** lists Claude sessions you started yourself (for example `claude --agent orchestrator` in a project), which the runner doesn't record. It shows sessions whose transcript changed in the last 15 minutes (`ACTIVE_MINUTES` changes this), most recent first, at most 8: the project path, the session's agent (`--agent <name>`, or "main session"), the subagent that is working right now (`orchestrator → tester`), its last action, and the time since the last activity. Sessions idle for more than 5 minutes are dimmed. Farm runs (projects under `worktrees/`) are left out because they are already shown above. The session you are watching from may appear too. So may a project-manager run (`bin/pm.sh`) when the branch has no worktree and it runs in the repo itself: it shows up briefly as a "main session" while it works. The header also counts them: `running N   queued N   interactive N`.
+- `CLAUDE_PROJECTS_DIR` points it at another transcripts folder (default `~/.claude/projects`), which is useful for testing.
+- It only reads local files and makes no API calls, so it doesn't use your Pro limits. For interactive sessions it only reads transcripts changed within `ACTIVE_MINUTES`, and only their last 256 KB.
 
 ## Status (for a dashboard, Linear or a database later)
 Every state change is recorded by `bin/status.js`:
@@ -130,3 +132,10 @@ Every state change is recorded by `bin/status.js`:
 ## Safety
 - Runs use `PERMISSION_MODE=auto`, which blocks risky commands automatically. Use `bypassPermissions` only inside a Docker container.
 - Agents never push or merge. Only the script pushes, and only to its own `agent/*` branch (fix rounds push to the PR's existing branch). The project manager only comments. You merge.
+
+## TODO
+- **Record interactive sessions as status events (option 2).** The monitor finds interactive sessions by scanning transcripts, so they never reach `state/events.jsonl`, `state/status.json` or `STATUS_HOOK` (and so not the future online dashboard in Linear or a database). Claude Code hooks could fix that: `SessionStart` and `SessionEnd` (and optionally `SubagentStart` / `SubagentStop`) in `~/.claude/settings.json`, each calling `bin/status.js` with the hook's JSON (session id, cwd, agent). You have to edit `~/.claude/settings.json` yourself, because Claude can't change its own settings. To decide first:
+  - Event names, for example `session_started` / `session_ended` / `subagent_started` / `subagent_stopped`, and whether they share the task schema in `status.json` or get their own `sessions` key.
+  - Whether to track subagents, or only the main session (fewer events, less noise).
+  - How to label sessions: project path, `--agent` name, session id, or the session title.
+  - Whether to skip farm runs (`worktrees/`) in the hook, since the runner already records them.
