@@ -4,6 +4,14 @@
 # Each task names its repo in its frontmatter (`repo: ~/code/app`). Safe to run from cron:
 # only one dispatcher runs at a time, and it waits out a usage-limit pause.
 # Keep parallelism low on a Pro plan: all agents share the same usage limits.
+# Before dispatching it checks the plan usage (bin/usage.sh) against farm.conf's limits and, when a window is
+# at or over its limit, pauses until that window resets instead (see README: "Usage limits").
+#
+# Settings (environment variables; the usage limits also live in farm.conf):
+#   PARALLEL=2              tasks at a time (the first argument wins)
+#   USAGE_LIMIT_5H=75       don't start tasks at or above this 5-hour usage percentage (0 = off)
+#   USAGE_LIMIT_WEEK=90     don't start tasks at or above this weekly usage percentage (0 = off)
+#   USAGE_GATE=1            0 skips the usage check here and in bin/run-task.sh
 set -euo pipefail
 
 FARM="$(cd "$(dirname "$0")/.." && pwd)"
@@ -22,6 +30,13 @@ rm -f "$FARM/state/paused-until"
 shopt -s nullglob
 queued=("$FARM"/tasks/inbox/*.md)
 [ ${#queued[@]} -gt 0 ] || { echo "inbox empty"; exit 0; }
+
+# Don't start a batch when a plan-usage window is at or over its limit (a failed check only warns)
+if [ "${USAGE_GATE:-1}" != 0 ]; then
+  # shellcheck source=lib/usage-gate.sh
+  source "$FARM/bin/lib/usage-gate.sh"
+  usage_gate || exit 0
+fi
 
 running=()
 for t in "${queued[@]}"; do

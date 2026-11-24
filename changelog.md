@@ -5,6 +5,10 @@ All notable changes to the agent farm are documented here. The format follows [K
 ## [Unreleased]
 
 ### Added
+- Plan-usage tracking: `bin/usage.sh [--refresh] [--json]` reads the 5-hour and weekly usage from a minimal Haiku probe's `rate_limit_event` (a tiny amount of quota per probe), caches it in `state/usage.json` for `USAGE_MAX_AGE` seconds and records a `usage` status event. A failed probe keeps the old reading and exits 1.
+- `farm.conf`: committed, non-secret farm settings (`USAGE_LIMIT_5H=75`, `USAGE_LIMIT_WEEK=90`, `USAGE_MAX_AGE=600`), parsed safely by `bin/lib/config.sh` (known keys only, never sourced); environment variables override it.
+- Usage gates: `bin/farm.sh` does not dispatch, and `bin/run-task.sh` puts the task back in the inbox (exit 3, before any worktree), when a usage window is at or over its limit. Both write `state/paused-until` = that window's reset and record a `usage_pause` event. A failed check only warns. `USAGE_GATE=0` skips them. Shared logic in `bin/lib/usage-gate.sh`.
+- Monitor: a usage line under the header (percentages coloured near or over the limits, reset times, limits, reading age, stale marker). `bin/watch.sh` refreshes the reading in the background every `WATCH_USAGE_REFRESH` seconds (default 600, 0 = off); `bin/watch.js` itself still makes no API calls.
 - Notification emails come from the sender name "Agent Farm" (`NOTIFY_FROM_NAME`, `NOTIFY_FROM`). The README documents using a Gmail +alias and filter to label them.
 
 ### Security

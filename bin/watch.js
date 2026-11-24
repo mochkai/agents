@@ -7,6 +7,8 @@
 // ~/.claude/projects/<worktree-path>/ to see which agent is active and what it last did.
 // It also lists Claude sessions you started yourself (e.g. `claude --agent orchestrator`) that were active in
 // the last ACTIVE_MINUTES (default 15); farm runs under worktrees/ are left out of that list.
+// It also shows the last plan-usage reading (state/usage.json, written by bin/usage.sh) against the limits in
+// farm.conf (environment variables override them). It never probes the usage itself; bin/watch.sh refreshes it.
 // It is read-only and uses no API calls, so it costs nothing to run.
 const fs = require("fs");
 const os = require("os");
@@ -229,6 +231,62 @@ function interactiveSessions(now) {
   return { total: found.length, sessions };
 }
 
+/**
+ * Farm settings from farm.conf: known keys only, the file is parsed (never evaluated), environment variables
+ * win, and anything that is not a non-negative integer falls back to the default. Same rules as bin/lib/config.sh.
+ */
+function farmConfig() {
+  const conf = { USAGE_LIMIT_5H: 75, USAGE_LIMIT_WEEK: 90, USAGE_MAX_AGE: 600 };
+  const fromFile = {};
+  try {
+    for (const line of fs.readFileSync(path.join(FARM, "farm.conf"), "utf8").split("\n")) {
+      const m = line.replace(/\r$/, "").match(/^([A-Z0-9_]+)=(.*)$/);
+      if (m) fromFile[m[1]] = m[2].replace(/#.*$/, "").trim().replace(/^"|"$/g, "");
+    }
+  } catch {}
+  for (const key of Object.keys(conf)) {
+    const v = process.env[key] ?? fromFile[key];
+    if (v !== undefined && /^[0-9]+$/.test(v)) conf[key] = Number(v);
+  }
+  return conf;
+}
+
+/** Reset time of a usage window: "18:10" within 20 hours, otherwise with the weekday ("Thu 21:00"). */
+function resetTime(iso, now) {
+  const d = new Date(iso);
+  if (!iso || isNaN(d)) return "?";
+  const hm = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  return d - now < 20 * 3600e3 ? hm : `${["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][d.getDay()]} ${hm}`;
+}
+
+/**
+ * The usage line under the header, from state/usage.json and the farm.conf limits.
+ * Each percentage is yellow within 10 points of its limit and red at or over it; a reading older than
+ * 2 x USAGE_MAX_AGE is marked stale. A missing or malformed file gives an "unknown" line instead of an error.
+ */
+function usageLine(now) {
+  const conf = farmConfig();
+  const label = dim("usage");
+  let u;
+  try { u = JSON.parse(fs.readFileSync(path.join(FARM, "state", "usage.json"), "utf8")); } catch (e) {
+    return `${label}  ${dim(e.code === "ENOENT" ? "unknown (run bin/usage.sh)" : "unknown (state/usage.json is unreadable; run bin/usage.sh --refresh)")}`;
+  }
+  if (!u || typeof u !== "object" || Array.isArray(u)) return `${label}  ${dim("unknown (state/usage.json is unreadable; run bin/usage.sh --refresh)")}`;
+  const part = (name, w, limit) => {
+    const pct = Number(w?.percent);
+    if (!w || typeof w !== "object" || !Number.isFinite(pct)) return `${name} ?`;
+    const text = `${Math.round(pct)}%`;
+    const colored = limit > 0 && pct >= limit ? red(text) : limit > 0 && pct >= limit - 10 ? yellow(text) : text;
+    return `${name} ${colored} ${dim(`(resets ${resetTime(w.resets_at, now)})`)}`;
+  };
+  const limits = [conf.USAGE_LIMIT_5H, conf.USAGE_LIMIT_WEEK].map((l) => (l > 0 ? `${l}%` : "off")).join(" / ");
+  const checked = Date.parse(u.checked_at);
+  const age = Number.isFinite(checked)
+    ? (now - checked > 2 * conf.USAGE_MAX_AGE * 1000 ? yellow(`checked ${ago(now - checked)} ago (stale)`) : dim(`checked ${ago(now - checked)} ago`))
+    : yellow("checked ? (stale)");
+  return `${label}  ${part("5h", u.five_hour, conf.USAGE_LIMIT_5H)} · ${part("week", u.seven_day, conf.USAGE_LIMIT_WEEK)} · ${dim(`limits ${limits}`)} · ${age}`;
+}
+
 function render() {
   let snap = { tasks: {} };
   try { snap = JSON.parse(fs.readFileSync(path.join(FARM, "state", "status.json"), "utf8")); } catch {}
@@ -247,6 +305,7 @@ function render() {
   out.push(bold(`Agent farm · ${snap.machine || os.hostname()}`) + dim(`   ${new Date().toLocaleTimeString()}`) + paused);
   const interactive = interactiveSessions(now);
   out.push(`running ${bold(String(running.length))}   queued ${bold(String(inbox))}   interactive ${bold(String(interactive.total))}`);
+  out.push(usageLine(now));
   out.push("");
 
   if (!running.length) out.push(dim("  no tasks running"));

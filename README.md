@@ -59,9 +59,30 @@ To run it automatically every 15 minutes, add this with `crontab -e`. In WSL, cr
 - **Failure (or timeout) with commits:** the task moves to `tasks/failed/`, and the branch is still pushed as a **draft** PR titled `[WIP] <title>`, with the report and a note that it did not pass tests or review. No project-manager step and no notification. A failed fix round with new commits pushes them to its existing PR and comments its report (`## Fix round <n> report (orchestrator): FAILED`); with or without commits it notifies `needs_human` (with the PR link), and the project manager does not run.
 - **Failure with no commits:** the task moves to `tasks/failed/`, the report explains why, and nothing is pushed.
 - **Usage limit hit:** the task goes back to the inbox and dispatching pauses for 60 minutes (`PAUSE_MINUTES`).
+- **Usage over a farm limit:** the task is not started; it goes back to the inbox and dispatching pauses until the usage window resets (see [Usage limits](#usage-limits)).
 - **Reports:** `logs/<id>.report.md`. Code: branch `agent/<id>`, working copy in `worktrees/<id>`.
 
 Nothing is ever merged automatically: every result is a PR for you to review and merge. `PR=0` keeps everything local. Interactive orchestrator sessions (`claude --agent orchestrator`) end the same way: after review they push their feature branch and open a PR (a draft if the review did not pass) and give you the link.
+
+## Usage limits
+Your Claude plan has two usage windows: a **5-hour** window and a **weekly** (7-day) window. The farm reads how much of each is used and stops starting new tasks before they run out, so the limits are not burnt by agents alone. They are shared with your own interactive sessions (the CLI, VS Code, the desktop app), which use the same windows.
+
+Settings live in `farm.conf` (committed, non-secret; only these keys are read, and the file is parsed, never sourced). An environment variable with the same name overrides it.
+```bash
+USAGE_LIMIT_5H=75     # don't start tasks at or above 75% of the 5-hour window (0 disables the check)
+USAGE_LIMIT_WEEK=90   # don't start tasks at or above 90% of the weekly window (0 disables the check)
+USAGE_MAX_AGE=600     # seconds a cached reading (state/usage.json) is reused before probing again
+```
+
+**`bin/usage.sh [--refresh] [--json]`** prints the current reading, for example `5h 42% (resets 18:10) · week 25% (resets Thu 21:00)`, or the JSON with `--json`. It reuses `state/usage.json` while it is younger than `USAGE_MAX_AGE` (unless `--refresh`); otherwise it **probes**: one minimal Haiku call (`claude -p ok --model haiku --tools ""`) whose stream output carries a `rate_limit_event` with both windows. Each probe costs a tiny amount of quota. The reading is written atomically to `state/usage.json` (`checked_at`, and per window `percent`, `resets_at`, `status`) and recorded as a `usage` status event. Probes never overlap. If the probe fails or no event comes back (not logged in, offline), the old file is kept, a warning is printed and it exits 1.
+
+**Gates:**
+- **Dispatcher** (`bin/farm.sh`): before dispatching a non-empty inbox it checks the usage. When a window is at or over its limit it writes `state/paused-until` = that window's reset time, prints for example `usage 5h 81% ≥ 75%: not starting tasks until 18:10`, records a `usage_pause` event (window, percent, limit, until) and exits without starting anything. Later runs (cron) wait out the pause as usual. If both windows are over, it waits for the later reset.
+- **Per task** (`bin/run-task.sh`): with `PARALLEL > 1` or a long queue, usage can cross a limit mid-batch, so each task checks again (the cached reading, probing only when stale) before creating its worktree. Over a limit, the task goes back to `tasks/inbox/` (when it came from `tasks/running/`), the pause is written, a `usage_pause` event is recorded and it exits 3, like a usage-limit requeue.
+- `USAGE_GATE=0` skips both checks (for example `USAGE_GATE=0 bin/run-task.sh task.md` for a direct run).
+- If the check itself fails, a warning is printed and the task starts anyway. The usage-limit requeue (above) stays the safety net.
+
+The monitor shows the last reading under its header (see [Monitor](#monitor)). It never probes; `bin/watch.sh` refreshes the reading in the background.
 
 ## Project manager & notifications
 After a run opens a PR (or a fix round updates one), `bin/run-task.sh` runs `bin/pm.sh` on the finished task. The project-manager agent reads the PR (body, reviews, comments, diff, CI checks), posts one `## Project manager decision` comment, and decides:
@@ -118,16 +139,18 @@ Without msmtp or `NOTIFY_EMAIL`, notifications are only logged, with the warning
 bin/watch.sh        # live view, refreshes every 5 s (Ctrl+C to exit); bin/watch.sh 2 for every 2 s
 node bin/watch.js   # print once
 ```
+Under the header, a usage line shows the last plan-usage reading and the limits: `usage  5h 42% (resets 18:10) · week 25% (resets Thu 21:00) · limits 75% / 90% · checked 3m ago`. A percentage is yellow within 10 points of its limit and red at or over it. A reading older than 2 × `USAGE_MAX_AGE` is marked `(stale)`, and without `state/usage.json` it shows `usage  unknown (run bin/usage.sh)`. `bin/watch.sh` refreshes the reading in the background every `WATCH_USAGE_REFRESH` seconds (default 600, `0` disables it) with `bin/usage.sh --refresh`, quietly and never two at once; each refresh is a probe and costs a tiny amount of quota. `node bin/watch.js` alone never probes.
+
 For each running task it shows how long it has been running, the agents called so far (`coder → tester → reviewer`), which agent is active right now, and its last action (the file it's reading, the command it's running). It also shows the queue size, any usage-limit pause, and the last 5 finished tasks with their PR links.
 - A **red dot** means the runner process died (crash or kill). Check `logs/<id>.err`.
 - **⚠ no activity for Xm** appears after 10 minutes with no activity (`STALE_MINUTES` changes this): either stuck, or waiting on a long command.
 - **Interactive sessions** lists Claude sessions you started yourself (for example `claude --agent orchestrator` in a project), which the runner doesn't record. It shows sessions whose transcript changed in the last 15 minutes (`ACTIVE_MINUTES` changes this), most recent first, at most 8: the project path, the session's agent (`--agent <name>`, or "main session"), the subagent that is working right now (`orchestrator → tester`), its last action, and the time since the last activity. Sessions idle for more than 5 minutes are dimmed. Farm runs (projects under `worktrees/`) are left out because they are already shown above. The session you are watching from may appear too. So may a project-manager run (`bin/pm.sh`) when the branch has no worktree and it runs in the repo itself: it shows up briefly as a "main session" while it works. The header also counts them: `running N   queued N   interactive N`.
 - `CLAUDE_PROJECTS_DIR` points it at another transcripts folder (default `~/.claude/projects`), which is useful for testing.
-- It only reads local files and makes no API calls, so it doesn't use your Pro limits. For interactive sessions it only reads transcripts changed within `ACTIVE_MINUTES`, and only their last 256 KB.
+- `watch.js` only reads local files and makes no API calls, so it doesn't use your Pro limits (the background usage refresh in `watch.sh` is the one exception, see above). For interactive sessions it only reads transcripts changed within `ACTIVE_MINUTES`, and only their last 256 KB.
 
 ## Status (for a dashboard, Linear or a database later)
 Every state change is recorded by `bin/status.js`:
-- `state/events.jsonl`: an append-only event log (`started`, `done`, `failed`, `requeued`, `cleaned`, `pm_decision`, `pm_fix`, `notified`, `notify_failed`)
+- `state/events.jsonl`: an append-only event log (`started`, `done`, `failed`, `requeued`, `cleaned`, `pm_decision`, `pm_fix`, `notified`, `notify_failed`, `usage`, `usage_pause`)
 - `state/status.json`: a snapshot with the machine, the number of running agents, and each task's state and PR
 - `STATUS_HOOK='my-sync-script'`: run for every event, with the event JSON on stdin. This is where a Linear, database or webhook adapter plugs in.
 

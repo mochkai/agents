@@ -19,8 +19,12 @@
 #   PR=1                    push the branch and open a GitHub PR (draft if failed; 0 = keep the local branch only)
 #   PM=1                    after a PR is opened or updated, run the project manager (bin/pm.sh; 0 = skip)
 #   STATUS_HOOK=<cmd>       command run with each status event as JSON on stdin (see bin/status.js)
+#   USAGE_GATE=1            check the plan usage (bin/usage.sh) before any work; 0 skips the check
+#   USAGE_LIMIT_5H=75 / USAGE_LIMIT_WEEK=90   usage limits in percent (also in farm.conf; 0 = off)
+# Usage gate: when a usage window is at or over its limit, the task goes back to tasks/inbox/ (if it came
+# from tasks/running/), dispatching pauses until that window resets, and it exits 3 before creating a worktree.
 #
-# Exit codes: 0 done, 1 failed, 3 requeued (usage limit hit), 2 bad input
+# Exit codes: 0 done, 1 failed, 3 requeued (usage limit hit, or a usage window over its limit), 2 bad input
 set -euo pipefail
 
 FARM="$(cd "$(dirname "$0")/.." && pwd -P)"   # physical path, so worktree paths from git compare equal
@@ -45,6 +49,19 @@ NAME="$(basename "$TASK" .md)"
 TITLE="$(fm title)"; TITLE="${TITLE:-$NAME}"
 ID="$(date +%Y%m%d-%H%M%S)-$NAME"
 LOG="$FARM/logs/$ID"
+
+# Usage gate: with several tasks in a batch, usage can cross a limit mid-batch. Checked before any worktree
+# exists, so there is nothing to undo; the cached reading is reused and only refreshed when stale.
+if [ "${USAGE_GATE:-1}" != 0 ]; then
+  # shellcheck source=lib/usage-gate.sh
+  source "$FARM/bin/lib/usage-gate.sh"
+  mkdir -p "$FARM/state"
+  if ! usage_gate task="$NAME"; then
+    case "$TASK" in "$FARM/tasks/running/"*) mkdir -p "$FARM/tasks/inbox"; mv "$TASK" "$FARM/tasks/inbox/" ;; esac
+    echo "[$ID] requeued: plan usage over its limit"
+    exit 3
+  fi
+fi
 # Fix rounds continue an existing branch and PR
 FIX_BRANCH="$(fm branch)"; EXISTING_PR="$(fm pr)"; ROUND="$(fm round)"; [[ "$ROUND" =~ ^[0-9]+$ ]] || ROUND=0
 if [ -n "$FIX_BRANCH" ]; then
