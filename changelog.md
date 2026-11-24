@@ -7,7 +7,7 @@ All notable changes to the agent farm are documented here. The format follows [K
 ### Added
 - Plan-usage tracking: `bin/usage.sh [--refresh] [--json]` reads the 5-hour and weekly usage from a minimal Haiku probe's `rate_limit_event` (a tiny amount of quota per probe), caches it in `state/usage.json` for `USAGE_MAX_AGE` seconds and records a `usage` status event. A failed probe keeps the old reading and exits 1.
 - `farm.conf`: committed, non-secret farm settings (`USAGE_LIMIT_5H=75`, `USAGE_LIMIT_WEEK=90`, `USAGE_MAX_AGE=600`), parsed safely by `bin/lib/config.sh` (known keys only, never sourced); environment variables override it.
-- Usage gates: `bin/farm.sh` does not dispatch, and `bin/run-task.sh` puts the task back in the inbox (exit 3, before any worktree), when a usage window is at or over its limit. Both write `state/paused-until` = that window's reset and record a `usage_pause` event. A failed check only warns. `USAGE_GATE=0` skips them. Shared logic in `bin/lib/usage-gate.sh`.
+- Usage gates: `bin/farm.sh` does not dispatch, and `bin/run-task.sh` puts the task back in the inbox (exit 3, before any worktree), when a usage window is at or over its limit. Both write `state/paused-until` = that window's reset and record a `usage_pause` event. A failed check only warns. `USAGE_GATE=0` skips them. Shared logic in `bin/lib/usage-gate.sh`. An over-limit window without a valid reset time pauses for `PAUSE_MINUTES` (default 60), and the message and event say the reset is unknown. The README explains how to lift a pause early (`rm state/paused-until`).
 - Monitor: a usage line under the header (percentages coloured near or over the limits, reset times, limits, reading age, stale marker). `bin/watch.sh` refreshes the reading in the background every `WATCH_USAGE_REFRESH` seconds (default 600, 0 = off); `bin/watch.js` itself still makes no API calls.
 - Notification emails come from the sender name "Agent Farm" (`NOTIFY_FROM_NAME`, `NOTIFY_FROM`). The README documents using a Gmail +alias and filter to label them.
 
@@ -25,6 +25,7 @@ All notable changes to the agent farm are documented here. The format follows [K
 - Reviewer agent: replies now include a merge-confidence percentage, a quality-gate summary and a "Not verified" section. When the reviewed branch has an open PR, the reviewer also posts the full review as one PR comment. It never approves through the GitHub review API, and it never merges.
 
 ### Fixed
+- The usage-limit requeue in `bin/run-task.sh` no longer shortens a longer pause already in `state/paused-until` (for example one set by the usage gate until a weekly reset). The gate's message and `usage_pause` event report the pause actually in effect, and `bin/farm.sh`'s "paused until" message names the weekday for pauses more than 20 hours away.
 - A run that timed out or crashed without a result was requeued as if it had hit the usage limit, because the fallback report text itself contained "usage limit". The text no longer matches, so such runs now fail (and open a draft PR when they have commits).
 - `cleaned` status events now remove the task from `state/status.json`. Previously they left an empty entry behind.
 

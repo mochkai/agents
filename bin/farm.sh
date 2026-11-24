@@ -21,9 +21,12 @@ mkdir -p "$FARM/state" "$FARM/tasks"/{inbox,running,done,failed}
 exec 9>"$FARM/.farm.lock"
 flock -n 9 || { echo "dispatcher already running"; exit 0; }
 
-# Respect a usage-limit pause set by run-task.sh
+# shellcheck source=lib/usage-gate.sh
+source "$FARM/bin/lib/usage-gate.sh"   # pause helpers and the usage gate
+
+# Respect a usage pause set by run-task.sh or the usage gate (delete state/paused-until to lift it early)
 if [ -f "$FARM/state/paused-until" ] && [ "$(date +%s)" -lt "$(cat "$FARM/state/paused-until")" ]; then
-  echo "paused (usage limit) until $(date -d @"$(cat "$FARM/state/paused-until")" '+%H:%M')"; exit 0
+  echo "paused (usage limit) until $(pause_time "$(cat "$FARM/state/paused-until")")"; exit 0
 fi
 rm -f "$FARM/state/paused-until"
 
@@ -33,8 +36,6 @@ queued=("$FARM"/tasks/inbox/*.md)
 
 # Don't start a batch when a plan-usage window is at or over its limit (a failed check only warns)
 if [ "${USAGE_GATE:-1}" != 0 ]; then
-  # shellcheck source=lib/usage-gate.sh
-  source "$FARM/bin/lib/usage-gate.sh"
   usage_gate || exit 0
 fi
 

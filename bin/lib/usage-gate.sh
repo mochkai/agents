@@ -1,47 +1,70 @@
 # shellcheck shell=bash
 # Shared usage gate for bin/farm.sh and bin/run-task.sh: should new work start, given the plan usage?
 #   usage: source "$FARM/bin/lib/usage-gate.sh"; usage_gate [status key=value ...] || <over a limit>
+# Also provides the pause helpers set_pause (never shortens a pause) and pause_time (message formatting).
 # Needs $FARM set. Limits come from farm.conf / the environment (bin/lib/config.sh).
 
 # shellcheck source=config.sh
 source "$FARM/bin/lib/config.sh"
 
+# Format a unix time for messages: "18:10" when it is less than 20 hours away, otherwise "Thu 21:00".
+#   pause_time <unix-seconds>
+pause_time() {
+  if [ $(( $1 - $(date +%s) )) -lt 72000 ]; then date -d @"$1" '+%H:%M'; else date -d @"$1" '+%a %H:%M'; fi
+}
+
+# Pause dispatching until <unix-seconds>, never shortening a longer pause already in state/paused-until.
+# Prints the pause that is in effect afterwards (the new one, or the longer existing one).
+#   set_pause <unix-seconds>
+set_pause() {
+  local current
+  current="$(cat "$FARM/state/paused-until" 2>/dev/null || echo 0)"
+  if [[ "$current" =~ ^[0-9]+$ ]] && [ "$current" -gt "$1" ]; then
+    echo "$current"
+  else
+    mkdir -p "$FARM/state"
+    echo "$1" > "$FARM/state/paused-until"
+    echo "$1"
+  fi
+}
+
 # Check the plan usage (bin/usage.sh: cached reading, probing only when stale) against the limits.
 # Returns 0 when work may start: under every limit, or the check failed (a warning is printed; the
 # usage-limit requeue in bin/run-task.sh stays the safety net). Returns 1 when a window is at or over its
-# limit: state/paused-until is set to that window's reset (never shortened), a message is printed, and a
-# `usage_pause` status event is recorded with the extra key=value fields given as arguments.
-# When several windows are over their limits, the pause lasts until the latest reset.
+# limit: state/paused-until is set to that window's reset (never shortened; an unknown reset time pauses
+# for PAUSE_MINUTES, default 60), a message is printed, and a `usage_pause` status event is recorded with
+# the extra key=value fields given as arguments. With several windows over their limits, the latest reset wins.
 usage_gate() {
-  local json verdict window percent limit until current when
+  local json verdict window percent limit until reset effective note=""
   farm_config "$FARM"
   if ! json="$("$FARM/bin/usage.sh" --json)"; then
     echo "WARNING: usage check failed; starting anyway" >&2
     return 0
   fi
-  # Prints "<window> <percent> <limit> <until-unix>" for the over-limit window that resets last, or nothing
+  # Prints "<window> <percent> <limit> <until-unix> <known|unknown>" for the over-limit window that resets
+  # last, or nothing. A window without a valid reset time pauses for the fallback (now + PAUSE_MINUTES).
   verdict="$(printf '%s' "$json" | node -e '
     const u = JSON.parse(require("fs").readFileSync(0, "utf8"));
-    const [lim5h, limWeek] = process.argv.slice(1).map(Number);
+    const [lim5h, limWeek, fallbackMin] = process.argv.slice(1).map(Number);
     const now = Date.now() / 1000;
     const over = [["5h", u.five_hour, lim5h], ["week", u.seven_day, limWeek]].flatMap(([label, w, limit]) => {
       if (!(limit > 0) || !w || !(Number(w.percent) >= limit)) return [];
       const until = Math.floor(Date.parse(w.resets_at) / 1000);
+      if (!Number.isFinite(until)) return [{ label, percent: Number(w.percent), limit, until: Math.floor(now + fallbackMin * 60), reset: "unknown" }];
       // A window that has already reset since the reading is no reason to wait
-      return until > now ? [{ label, percent: Number(w.percent), limit, until }] : [];
+      return until > now ? [{ label, percent: Number(w.percent), limit, until, reset: "known" }] : [];
     }).sort((a, b) => b.until - a.until);
-    if (over.length) console.log(`${over[0].label} ${over[0].percent} ${over[0].limit} ${over[0].until}`);
-  ' "$USAGE_LIMIT_5H" "$USAGE_LIMIT_WEEK")" || { echo "WARNING: could not evaluate the usage reading; starting anyway" >&2; return 0; }
+    if (over.length) { const o = over[0]; console.log(`${o.label} ${o.percent} ${o.limit} ${o.until} ${o.reset}`); }
+  ' "$USAGE_LIMIT_5H" "$USAGE_LIMIT_WEEK" "${PAUSE_MINUTES:-60}")" \
+    || { echo "WARNING: could not evaluate the usage reading; starting anyway" >&2; return 0; }
   [ -n "$verdict" ] || return 0
 
-  read -r window percent limit until <<< "$verdict"
-  # Keep a longer pause that is already set (e.g. by a usage-limit requeue)
-  current="$(cat "$FARM/state/paused-until" 2>/dev/null || echo 0)"
-  [[ "$current" =~ ^[0-9]+$ ]] && [ "$current" -gt "$until" ] || echo "$until" > "$FARM/state/paused-until"
-  # Pauses longer than 20 hours name the weekday too
-  if [ $(( until - $(date +%s) )) -lt 72000 ]; then when="$(date -d @"$until" '+%H:%M')"; else when="$(date -d @"$until" '+%a %H:%M')"; fi
-  echo "usage $window ${percent}% ≥ ${limit}%: not starting tasks until $when"
+  read -r window percent limit until reset <<< "$verdict"
+  effective="$(set_pause "$until")"
+  [ "$reset" = unknown ] && note=" (reset time unknown)"
+  [ "$effective" -gt "$until" ] && note="$note (an existing longer pause is kept)"
+  echo "usage $window ${percent}% ≥ ${limit}%: not starting tasks until $(pause_time "$effective")$note"
   node "$FARM/bin/status.js" usage_pause window="$window" percent="$percent" limit="$limit" \
-    until="$(date -u -d @"$until" +%Y-%m-%dT%H:%M:%SZ)" "$@" || true
+    until="$(date -u -d @"$effective" +%Y-%m-%dT%H:%M:%SZ)" reset="$reset" "$@" || true
   return 1
 }

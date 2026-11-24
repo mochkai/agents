@@ -80,7 +80,11 @@ USAGE_MAX_AGE=600     # seconds a cached reading (state/usage.json) is reused be
 - **Dispatcher** (`bin/farm.sh`): before dispatching a non-empty inbox it checks the usage. When a window is at or over its limit it writes `state/paused-until` = that window's reset time, prints for example `usage 5h 81% ≥ 75%: not starting tasks until 18:10`, records a `usage_pause` event (window, percent, limit, until) and exits without starting anything. Later runs (cron) wait out the pause as usual. If both windows are over, it waits for the later reset.
 - **Per task** (`bin/run-task.sh`): with `PARALLEL > 1` or a long queue, usage can cross a limit mid-batch, so each task checks again (the cached reading, probing only when stale) before creating its worktree. Over a limit, the task goes back to `tasks/inbox/` (when it came from `tasks/running/`), the pause is written, a `usage_pause` event is recorded and it exits 3, like a usage-limit requeue.
 - `USAGE_GATE=0` skips both checks (for example `USAGE_GATE=0 bin/run-task.sh task.md` for a direct run).
+- If an over-limit window has no valid reset time, the pause lasts `PAUSE_MINUTES` (default 60) and the message and event say the reset time is unknown (`reset=unknown`).
+- A pause is never shortened: the gates and the usage-limit requeue keep a longer pause that is already set.
 - If the check itself fails, a warning is printed and the task starts anyway. The usage-limit requeue (above) stays the safety net.
+
+**Lifting a pause early:** `rm ~/agents/state/paused-until`. `bin/farm.sh` checks `state/paused-until` before anything else, so `USAGE_GATE=0` or a higher limit in `farm.conf` does **not** lift a pause that is already set; delete the file as well (the next run then checks the usage again with the new limits).
 
 The monitor shows the last reading under its header (see [Monitor](#monitor)). It never probes; `bin/watch.sh` refreshes the reading in the background.
 

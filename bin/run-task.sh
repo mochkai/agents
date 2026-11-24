@@ -183,9 +183,12 @@ if [ $RC -ne 0 ] && grep -qiE 'usage limit|rate.?limit|limit reached|hit your li
     git -C "$REPO" branch -D "$BRANCH" >/dev/null 2>&1 || true
   fi
   case "$TASK" in "$FARM/tasks/running/"*) mv "$TASK" "$FARM/tasks/inbox/" ;; esac
-  date -d "+${PAUSE_MINUTES:-60} minutes" +%s > "$FARM/state/paused-until"
+  # Never shorten a longer pause (e.g. one set by the usage gate until a window resets)
+  # shellcheck source=lib/usage-gate.sh
+  source "$FARM/bin/lib/usage-gate.sh"
+  paused_until="$(set_pause "$(date -d "+${PAUSE_MINUTES:-60} minutes" +%s)")"
   status requeued id="$ID" reason="usage limit"
-  echo "[$ID] requeued: usage limit reached; dispatching paused for ${PAUSE_MINUTES:-60} minutes"
+  echo "[$ID] requeued: usage limit reached; dispatching paused until $(pause_time "$paused_until")"
   exit 3
 fi
 
