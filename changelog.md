@@ -4,6 +4,9 @@ All notable changes to the agent farm are documented here. The format follows [K
 
 ## [Unreleased]
 
+### Changed
+- Reviewer agent: replies now include a merge-confidence percentage, a quality-gate summary and a "Not verified" section. When the reviewed branch has an open PR, the reviewer also posts the full review as one PR comment. It never approves through the GitHub review API, and it never merges.
+
 ### Fixed
 - `cleaned` status events now remove the task from `state/status.json`. Previously they left an empty entry behind.
 
