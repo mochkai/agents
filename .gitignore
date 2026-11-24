@@ -3,3 +3,4 @@ logs/
 tasks/running/
 .farm.lock
 state/
+.env
