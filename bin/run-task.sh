@@ -2,18 +2,25 @@
 # Run ONE coding task autonomously, then open a PR if it passed tests and review.
 #   usage: bin/run-task.sh <task-file.md> [repo-path]
 # The repo comes from the task's frontmatter (`repo: ~/code/app`) unless it is given as an argument.
+# Fix rounds (queued by bin/pm.sh) add `branch:`, `pr:`, `round:` and `base_branch:` to the frontmatter:
+# the run then continues that branch (reusing its worktree when there is one) and updates the existing PR.
+# A fix round is refused before any work (task -> tasks/failed/ with a note, exit 2) when the branch is
+# not a farm `agent/*` branch, the PR is no longer open, the worktree has uncommitted changes, or the local
+# branch cannot fast-forward to origin. All but the closed-PR case send a `needs_human` notification, and so
+# does a fix round that fails or cannot push.
 #
 # Settings (environment variables):
 #   MODEL=sonnet            model for the orchestrator and subagents (docs-writer always uses haiku)
 #   TIMEOUT=3600            max seconds per task
 #   PERMISSION_MODE=auto    auto | acceptEdits | bypassPermissions (bypass only inside a container!)
 #   PR=1                    push the branch and open a GitHub PR on success (0 = keep the local branch only)
+#   PM=1                    after a PR is opened or updated, run the project manager (bin/pm.sh; 0 = skip)
 #   STATUS_HOOK=<cmd>       command run with each status event as JSON on stdin (see bin/status.js)
 #
 # Exit codes: 0 done, 1 failed, 3 requeued (usage limit hit), 2 bad input
 set -euo pipefail
 
-FARM="$(cd "$(dirname "$0")/.." && pwd)"
+FARM="$(cd "$(dirname "$0")/.." && pwd -P)"   # physical path, so worktree paths from git compare equal
 die() { echo "ERROR: $*" >&2; exit 2; }
 status() { node "$FARM/bin/status.js" "$@" || true; }
 # Read a frontmatter field from the task file
@@ -34,29 +41,100 @@ claude auth status 2>/dev/null | grep -q '"loggedIn": true' \
 NAME="$(basename "$TASK" .md)"
 TITLE="$(fm title)"; TITLE="${TITLE:-$NAME}"
 ID="$(date +%Y%m%d-%H%M%S)-$NAME"
-BRANCH="agent/$ID"
-WT="$FARM/worktrees/$ID"
 LOG="$FARM/logs/$ID"
-mkdir -p "$FARM/logs" "$FARM/worktrees" "$FARM/state"
+# Fix rounds continue an existing branch and PR
+FIX_BRANCH="$(fm branch)"; EXISTING_PR="$(fm pr)"; ROUND="$(fm round)"; [[ "$ROUND" =~ ^[0-9]+$ ]] || ROUND=0
+if [ -n "$FIX_BRANCH" ]; then
+  # The farm only continues its own branches
+  case "$FIX_BRANCH" in agent/?*) ;; *) die "branch '$FIX_BRANCH' is not a farm branch (must start with agent/)" ;; esac
+  git check-ref-format --branch "$FIX_BRANCH" >/dev/null 2>&1 || die "invalid branch name: $FIX_BRANCH"
+fi
+BRANCH="${FIX_BRANCH:-agent/$ID}"
+WT="$FARM/worktrees/$ID"
+# The task's title without the "Fix: ... (round N)" wrapper that bin/pm.sh adds
+ORIG_TITLE="$(printf '%s' "$TITLE" | sed -E 's/^Fix: (.*) \(round [0-9]+\)$/\1/')"
+mkdir -p "$FARM/logs" "$FARM/worktrees" "$FARM/state" "$FARM/tasks/failed"
+
+# Notify the human that a fix round needs them; the body comes from stdin. Never fails the run.
+notify_human() { NOTIFY_TASK="$ID" "$FARM/bin/notify.sh" needs_human "$1" - || true; }
+
+# Refuse a fix round before any work: move the task to tasks/failed/ with the reason, optionally notify, exit 2.
+#   refuse <reason> [notify=1]
+refuse() {
+  echo "[$ID] fix round not run: $1" >&2
+  case "$TASK" in "$FARM/tasks/running/"*)
+    mv "$TASK" "$FARM/tasks/failed/$ID.md"
+    printf '\n> Farm: fix round not run (%s): %s\n' "$(date -Iseconds)" "$1" >> "$FARM/tasks/failed/$ID.md" ;;
+  esac
+  status failed id="$ID" repo="$REPO" branch="$BRANCH" title="$TITLE" round="$ROUND" pr="$EXISTING_PR" reason="$1"
+  [ "${2:-1}" = 1 ] && printf 'Fix round %s for %s was not run.\nReason: %s\nBranch: %s\nTask: %s\n' \
+    "$ROUND" "${EXISTING_PR:-?}" "$1" "$BRANCH" "$ID" | notify_human "Fix round $ROUND blocked: $ORIG_TITLE"
+  exit 2
+}
+
+# A fix round only makes sense while its PR is open
+if [ -n "$FIX_BRANCH" ] && [ -n "$EXISTING_PR" ]; then
+  pr_state="$(cd "$REPO" && gh pr view "$EXISTING_PR" --json state -q .state 2>/dev/null || true)"
+  case "$pr_state" in
+    MERGED|CLOSED) refuse "PR $EXISTING_PR is $pr_state" 0 ;;
+    OPEN) ;;
+    *) echo "[$ID] WARNING: could not read the state of $EXISTING_PR; continuing" >&2 ;;
+  esac
+fi
 
 if [ -n "$(git -C "$REPO" status --porcelain -- .claude/skills 2>/dev/null)" ]; then
   echo "WARNING: $REPO has uncommitted changes in .claude/skills; agents will NOT see them (commit first)" >&2
 fi
 
 # Isolated worktree + branch per task, so parallel agents never collide
-BASE="$(git -C "$REPO" rev-parse --short HEAD)"
-BASE_BRANCH="$(git -C "$REPO" symbolic-ref --quiet --short HEAD || echo main)"
-git -C "$REPO" worktree add -q -b "$BRANCH" "$WT"
+BASE_BRANCH="$(fm base_branch)"
+[ -n "$BASE_BRANCH" ] || BASE_BRANCH="$(git -C "$REPO" symbolic-ref --quiet --short HEAD || echo main)"
+if [ -n "$FIX_BRANCH" ]; then
+  # Reuse the farm worktree that already has the branch checked out, if any
+  existing="$(git -C "$REPO" worktree list --porcelain \
+              | awk -v b="refs/heads/$BRANCH" '/^worktree /{p=substr($0,10)} $0=="branch "b{print p;exit}')"
+  fetched=0
+  if [ -n "$existing" ] && [ "${existing#"$FARM/worktrees/"}" != "$existing" ] && [ -d "$existing" ]; then
+    WT="$existing"
+  else
+    [ -n "$existing" ] && refuse "branch $BRANCH is checked out outside the farm ($existing)"
+    # Name the worktree after the branch, so bin/cleanup.sh maps worktrees/<x> back to agent/<x>
+    slug="${BRANCH#agent/}"; WT="$FARM/worktrees/${slug//\//-}"
+    [ -e "$WT" ] && refuse "worktree path already exists: $WT"
+    if ! git -C "$REPO" show-ref --verify -q "refs/heads/$BRANCH"; then
+      git -C "$REPO" fetch -q origin "$BRANCH:$BRANCH" || refuse "branch $BRANCH not found locally or on origin"
+      fetched=1
+    fi
+    git -C "$REPO" worktree add -q "$WT" "$BRANCH" || refuse "could not add a worktree for $BRANCH"
+  fi
+  # Never run over someone's uncommitted work: a later reset (usage limit) must only drop this run's changes
+  [ -z "$(git -C "$WT" status --porcelain)" ] || refuse "worktree $WT has uncommitted changes"
+  # Bring a reused local branch up to date with the PR (e.g. commits pushed by a human)
+  if [ "$fetched" = 0 ] && git -C "$REPO" fetch -q origin "$BRANCH" 2>/dev/null \
+     && git -C "$REPO" rev-parse --verify -q "refs/remotes/origin/$BRANCH" >/dev/null; then
+    git -C "$WT" merge -q --ff-only "origin/$BRANCH" >/dev/null 2>&1 \
+      || refuse "local $BRANCH cannot fast-forward to origin/$BRANCH (diverged)"
+  fi
+  BASE="$(git -C "$WT" rev-parse --short HEAD)"
+else
+  BASE="$(git -C "$REPO" rev-parse --short HEAD)"
+  git -C "$REPO" worktree add -q -b "$BRANCH" "$WT"
+fi
+START="$(git -C "$WT" rev-parse HEAD)"
 node "$FARM/bin/build-agents.js" "$FARM/agents" > "$LOG.agents.json"
 node "$FARM/bin/build-agents.js" --body "$FARM/agents/orchestrator.md" > "$LOG.orchestrator.md"
 cp "$TASK" "$LOG.task.md"
 
-status started id="$ID" repo="$REPO" branch="$BRANCH" title="$TITLE" model="$MODEL" pid="$$"
-echo "[$ID] started  repo=$REPO branch=$BRANCH model=$MODEL"
+status started id="$ID" repo="$REPO" branch="$BRANCH" title="$TITLE" model="$MODEL" pid="$$" round="$ROUND" pr="$EXISTING_PR"
+echo "[$ID] started  repo=$REPO branch=$BRANCH model=$MODEL${FIX_BRANCH:+ fix-round=$ROUND}"
+
+# Fix rounds get one extra line telling the orchestrator to stay on the PR's branch
+FIX_LINE=""
+[ -n "$FIX_BRANCH" ] && FIX_LINE="FIX ROUND $ROUND for PR ${EXISTING_PR:-?} on branch $BRANCH (base: $BASE_BRANCH). Commit on this branch; review the whole PR diff against origin/$BASE_BRANCH."
 
 ADD_DIR=(); [ -d "$HOME/skills" ] && ADD_DIR=(--add-dir "$HOME/skills")
 set +e
-( cd "$WT" && timeout "$TIMEOUT" claude -p "$(printf 'MODE: unattended\n\n'; cat "$TASK")" \
+( cd "$WT" && timeout "$TIMEOUT" claude -p "$(printf 'MODE: unattended\n\n'; [ -n "$FIX_LINE" ] && printf '%s\n\n' "$FIX_LINE"; cat "$TASK")" \
     --append-system-prompt-file "$LOG.orchestrator.md" \
     --agents "$LOG.agents.json" \
     --permission-mode "$PERM" \
@@ -76,8 +154,14 @@ node -e '
 
 # Hit the Pro usage limit? Put the task back in the queue and pause dispatching for a while.
 if [ $RC -ne 0 ] && grep -qiE 'usage limit|rate.?limit|limit reached|hit your limit|overloaded' "$LOG.err" "$LOG.report.md" 2>/dev/null; then
-  git -C "$REPO" worktree remove --force "$WT" 2>/dev/null || true
-  git -C "$REPO" branch -D "$BRANCH" >/dev/null 2>&1 || true
+  if [ -n "$FIX_BRANCH" ]; then
+    # Keep the PR's branch and worktree; only drop this run's partial work
+    git -C "$WT" reset -q --hard "$START" 2>/dev/null || true
+    git -C "$WT" clean -qfd 2>/dev/null || true
+  else
+    git -C "$REPO" worktree remove --force "$WT" 2>/dev/null || true
+    git -C "$REPO" branch -D "$BRANCH" >/dev/null 2>&1 || true
+  fi
   case "$TASK" in "$FARM/tasks/running/"*) mv "$TASK" "$FARM/tasks/inbox/" ;; esac
   date -d "+${PAUSE_MINUTES:-60} minutes" +%s > "$FARM/state/paused-until"
   status requeued id="$ID" reason="usage limit"
@@ -93,13 +177,25 @@ else
 fi
 
 # Open a PR (success only, GitHub remotes only). Agents never push; this script does.
-PR_URL=""
+PR_URL=""; PUSH_FAILED=0
 if [ "$STATUS" = done ] && [ "$PR" = 1 ]; then
   if git -C "$REPO" remote get-url origin 2>/dev/null | grep -q 'github.com'; then
     { tail -n +2 "$LOG.report.md"
       printf '\n---\nTask: `%s` · Branch: `%s`\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n' "$NAME" "$BRANCH"
     } > "$LOG.pr.md"
-    if git -C "$REPO" push -q -u origin "$BRANCH" 2>>"$LOG.err" \
+    if [ -n "$EXISTING_PR" ]; then
+      # Fix round: pushing the same branch updates the PR; the round's report goes on as a comment
+      if git -C "$REPO" push -q -u origin "$BRANCH" 2>>"$LOG.err"; then
+        PR_URL="$EXISTING_PR"
+        echo "[$ID] PR updated: $PR_URL"
+        { printf '## Fix round %s report (orchestrator)\n\n' "$ROUND"; cat "$LOG.pr.md"; } > "$LOG.pr-comment.md"
+        (cd "$REPO" && gh pr comment "$PR_URL" --body-file "$LOG.pr-comment.md" >/dev/null 2>>"$LOG.err") \
+          || echo "[$ID] WARNING: could not comment the fix-round report on the PR (see $LOG.err)" >&2
+      else
+        echo "[$ID] WARNING: could not push $BRANCH to update $EXISTING_PR (see $LOG.err)" >&2
+        PUSH_FAILED=1
+      fi
+    elif git -C "$REPO" push -q -u origin "$BRANCH" 2>>"$LOG.err" \
        && PR_URL="$(cd "$REPO" && gh pr create --head "$BRANCH" --base "$BASE_BRANCH" --title "$TITLE" --body-file "$LOG.pr.md" 2>>"$LOG.err" | tail -1)"; then
       echo "[$ID] PR opened: $PR_URL"
     else
@@ -112,9 +208,35 @@ if [ "$STATUS" = done ] && [ "$PR" = 1 ]; then
 fi
 
 # Move the task out of tasks/running if it came from the queue
-case "$TASK" in "$FARM/tasks/running/"*) mv "$TASK" "$FARM/tasks/$STATUS/$ID.md" ;; esac
+FINISHED="$LOG.task.md"
+case "$TASK" in "$FARM/tasks/running/"*) mv "$TASK" "$FARM/tasks/$STATUS/$ID.md"; FINISHED="$FARM/tasks/$STATUS/$ID.md" ;; esac
 status "$STATUS" id="$ID" pr="$PR_URL" report="$LOG.report.md"
 
 echo "[$ID] $STATUS  report=$LOG.report.md"
 [ -z "$PR_URL" ] && echo "        review:  git -C $REPO log --stat $BASE..$BRANCH   (or open $WT)"
+
+# A fix round that failed, or could not update its PR, is a dead end without a human
+if [ -n "$EXISTING_PR" ] && { [ "$STATUS" = failed ] || [ "$PUSH_FAILED" = 1 ]; }; then
+  { printf 'Fix round %s for %s %s.\nBranch: %s (worktree %s)\nReport: %s\n\n' "$ROUND" "$EXISTING_PR" \
+      "$([ "$PUSH_FAILED" = 1 ] && echo "succeeded but could not be pushed (see $LOG.err)" || echo failed)" "$BRANCH" "$WT" "$LOG.report.md"
+    cat "$LOG.report.md"
+  } | notify_human "Fix round $ROUND failed: $ORIG_TITLE"
+fi
+
+# Project manager: decide READY / FIX / NEEDS_HUMAN for the PR. Its outcome never changes this run's exit code.
+if [ "$STATUS" = done ] && [ -n "$PR_URL" ] && [ "${PM:-1}" = 1 ]; then
+  # Record the run on the finished-task copy's frontmatter (replacing any older values) for bin/pm.sh
+  node -e '
+    const fs = require("fs");
+    const [file, ...pairs] = process.argv.slice(1);
+    const set = Object.fromEntries(pairs.map((p) => [p.slice(0, p.indexOf("=")), p.slice(p.indexOf("=") + 1)]));
+    const text = fs.readFileSync(file, "utf8");
+    const m = text.match(/^---\n([\s\S]*?)\n---\n?([\s\S]*)$/);
+    const keep = (m ? m[1].split("\n") : []).filter((l) => !Object.keys(set).includes(l.slice(0, l.indexOf(":")).trim()));
+    const head = [...keep, ...Object.entries(set).map(([k, v]) => `${k}: ${v}`)].join("\n");
+    fs.writeFileSync(file, `---\n${head}\n---\n${m ? m[2] : text}`);
+  ' "$FINISHED" repo="$REPO" pr="$PR_URL" branch="$BRANCH" round="$ROUND" base_branch="$BASE_BRANCH" id="$ID" name="$NAME" \
+    && "$FARM/bin/pm.sh" "$FINISHED" \
+    || echo "[$ID] WARNING: project-manager step failed (see $LOG.pm-r$ROUND.err)" >&2
+fi
 [ "$STATUS" = done ]
