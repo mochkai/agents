@@ -3,10 +3,10 @@
 A library of reusable Claude Code agent profiles and a shared rules template. There is no runner here: you drive the agents yourself from interactive Claude Code sessions (CLI, VS Code or the desktop app), and they work in any project.
 
 ```
-claude --agent task-writer   ──► docs/tasks/<slug>.md (agreed spec)
-claude --agent orchestrator  ──► backend-coder / frontend-coder / coder ──► tester ──► reviewer ──► docs-writer ──► commit ──► PR
-                                 (fails or changes requested → back to the owning coder, max 3 rounds)
-project-manager              ──► triages any PR: READY / FIX / NEEDS_HUMAN
+claude --agent project-manager ──► intake: agreed spec as a GitHub issue (or docs/tasks/<slug>.md)
+claude --agent orchestrator    ──► backend-coder / frontend-coder / coder ──► tester ──► reviewer ──► docs-writer ──► commit ──► PR
+                                   (fails or changes requested → back to the owning coder, max 3 rounds)
+project-manager                ──► PR triage: READY / FIX / NEEDS_HUMAN
 ```
 
 ## What's here
@@ -14,8 +14,7 @@ project-manager              ──► triages any PR: READY / FIX / NEEDS_HUMAN
 | Agent | Role | When to use | Skills it loads (`~/skills`) |
 |---|---|---|---|
 | `orchestrator` | plans with you, delegates, runs the test → review → fix loop, commits on a new branch, opens a PR | start a session with `claude --agent orchestrator` in a project (main session only) | none (each specialist loads its own) |
-| `task-writer` | turns a rough idea into a precise spec in `docs/tasks/<slug>.md` | start a session with `claude --agent task-writer` before handing work to the orchestrator (main session only) | none |
-| `project-manager` | reads a PR, its reviews and CI, and decides READY, FIX or NEEDS_HUMAN with a confidence and fix list; never merges | on any PR, as a subagent or a session | none |
+| `project-manager` | intake: turns a rough idea or an issue into a precise spec, published as a GitHub issue (or `docs/tasks/<slug>.md`); PR triage: reads a PR, its reviews and CI, and decides READY, FIX or NEEDS_HUMAN with a confidence and fix list; never changes code or merges | intake: start a session with `claude --agent project-manager` before handing work to the orchestrator (main session, since it asks questions); triage: on any PR, as a subagent or a session | none |
 | `backend-coder` | Python: ruff, mypy or pyright, pytest, docstrings | subagent for `.py` / backend work | always: verification-before-completion; when fixing bugs: systematic-debugging, diagnosing-bugs |
 | `frontend-coder` | Next.js, React, TypeScript, accessibility | subagent for UI work | always: frontend-design, verification-before-completion; when fixing bugs: systematic-debugging |
 | `coder` | everything else (other languages, config, infra) | subagent | always: verification-before-completion; when fixing bugs: systematic-debugging |
@@ -40,8 +39,8 @@ Load the rules globally by adding this line to `~/.claude/CLAUDE.md`:
 
 ## Usage
 - **Per project (optional):** copy `templates/AGENTS.md` into the project root and add a `CLAUDE.md` containing `@AGENTS.md`, so the rules travel with the repo and can be tuned for it. Use one or the other: if you also import it globally, it loads twice. Prefer the global import on your own machine, and a per-project copy for repos other people use.
-- **Spec a task:** `claude --agent task-writer`, then agree the spec it saves to `docs/tasks/<slug>.md`.
-- **Build it:** in the project, `claude --agent orchestrator` and ask it to implement the spec (or describe the task directly). It asks questions, plans, delegates, and ends with a PR link.
+- **Spec a task:** `claude --agent project-manager` (intake mode), then agree the spec; it opens a GitHub issue (or saves `docs/tasks/<slug>.md` if you prefer).
+- **Build it:** in the project, `claude --agent orchestrator` and ask it to work on issue #N or implement the spec (or describe the task directly). It asks questions, plans, delegates, and ends with a PR link.
 - **Fix an existing PR:** run `project-manager` on the PR, then in `claude --agent orchestrator` ask it to fix PR #N with the fix list. It checks out the PR branch, commits and pushes there (never force-pushes), comments a summary on the PR, and does not open a new PR.
 - **Delegate directly:** from any session, ask for a specific agent (for example "use the reviewer on this diff", or "run project-manager on PR 12").
 
