@@ -39,9 +39,10 @@ Load the rules globally by adding this line to `~/.claude/CLAUDE.md`:
 ```
 
 ## Usage
-- **Per project (optional):** copy `templates/AGENTS.md` into the project root and add a `CLAUDE.md` containing `@AGENTS.md`, so the rules travel with the repo and can be tuned for it.
+- **Per project (optional):** copy `templates/AGENTS.md` into the project root and add a `CLAUDE.md` containing `@AGENTS.md`, so the rules travel with the repo and can be tuned for it. Use one or the other: if you also import it globally, it loads twice. Prefer the global import on your own machine, and a per-project copy for repos other people use.
 - **Spec a task:** `claude --agent task-writer`, then agree the spec it saves to `docs/tasks/<slug>.md`.
 - **Build it:** in the project, `claude --agent orchestrator` and ask it to implement the spec (or describe the task directly). It asks questions, plans, delegates, and ends with a PR link.
+- **Fix an existing PR:** run `project-manager` on the PR, then in `claude --agent orchestrator` ask it to fix PR #N with the fix list. It checks out the PR branch, commits and pushes there (never force-pushes), comments a summary on the PR, and does not open a new PR.
 - **Delegate directly:** from any session, ask for a specific agent (for example "use the reviewer on this diff", or "run project-manager on PR 12").
 
 ## Skills

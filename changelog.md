@@ -14,7 +14,16 @@ All notable changes to this agent library are documented here. The format follow
 - Project-manager: now a reusable PR-triage agent for any PR (READY / FIX / NEEDS_HUMAN with confidence and a fix list). Trusts only PR comments from the user's own GitHub account; posting its decision as a comment is optional; never merges.
 - Coder and tester: farm wording removed ("autonomous" team, orchestrator-only git handling).
 - `templates/AGENTS.md`: SCOPE no longer mentions unattended runs.
-- `.gitignore`: only `.env` plus the local farm leftovers (`logs/`, `state/`, `worktrees/`, `tasks/`, `.farm.lock`).
+- `.gitignore`: only `.env` (local secrets) is ignored now.
+- Orchestrator: checks for a dirty working tree before switching branches and asks what to do; stages only the files the agents reported changing (never `git add -A`); new "Update an existing PR" mode that continues PR #N on its own branch instead of opening a stacked PR.
+- `templates/AGENTS.md`: project-manager added to the SCOPE subagent role list.
+- README: recommends either the global import or a per-project copy of `AGENTS.md`, not both.
+
+## [0.1.0] - 2026-11-24
+
+The autonomous agent farm (retired in [Unreleased]).
+
+### Changed
 - Interactive orchestrator always works on a new feature branch, pushes only that branch, and asks before pushing anything else (review of #5).
 - Farm runs that fail or time out but leave commits on their branch are now pushed and opened as a **draft** PR titled `[WIP] <title>` (report plus a note that it did not pass tests or review). No project-manager step or notification for drafts. Runs without commits are unchanged, and `PR=0` still pushes nothing. The status event records the PR URL and `draft`.
 - A failed (or timed-out) fix round with new commits now pushes them to the existing PR branch and comments its report as `## Fix round <n> report (orchestrator): FAILED`, then notifies `needs_human` as before (the notification now includes the PR link and says whether the push failed). The project manager never runs for failed rounds, and a usage-limit requeue still resets the branch without pushing.
