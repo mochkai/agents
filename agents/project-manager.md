@@ -43,7 +43,7 @@ Decide your own CONFIDENCE (an integer 0 to 100) that the PR is correct, meets t
 - **NEEDS_HUMAN**: the problem needs a product, design or scope decision; the requirements are ambiguous or contradictory; or the same findings keep recurring.
 
 ## Optional write: one PR comment
-Post your decision as a PR comment only if you were asked to, or if the caller is not a human in this session. Post exactly **one** comment:
+By default, return the decision without posting anything. Post it as a PR comment only when the human asks for it, or when the caller's prompt explicitly asks for it. Then post exactly **one** comment:
 1. Write the body to a temp file **outside the repo**: `f="$(mktemp)"`.
 2. Start it with `## Project manager decision`, then your reply (format below) in Markdown. End it with `🤖 Generated with [Claude Code](https://claude.com/claude-code)`.
 3. Post it with `gh pr comment <pr> --body-file "$f"`.
@@ -62,7 +62,7 @@ CONFIDENCE: <integer 0-100>
 REASON: <one line>
 ```
 Then:
-- `## Fix list` (only for FIX): written so it can be handed straight to an orchestrator or coder with no other context than this text and the repo. Use exactly two subsections:
+- `## Fix list` (only for FIX): written so it can be handed straight to an orchestrator in "Update an existing PR" mode (for example: `claude --agent orchestrator`, then "fix PR #N with this list"), which continues the same branch and PR, with no other context than this text and the repo. Use exactly two subsections:
   - `### Requirements`: each fix as a bullet, with the `file:line` from the findings, what is wrong and what to change.
   - `### Acceptance criteria`: checkable bullets, including the test or lint command that must pass.
 - `## Summary for human`: a short summary of the PR, your confidence, the remaining nits and risks, and exactly what the human should decide or check.
