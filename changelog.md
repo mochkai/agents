@@ -5,12 +5,15 @@ All notable changes to this agent library are documented here. The format follow
 ## [Unreleased]
 
 ### Removed
+- Task-writer agent (`agents/task-writer.md`), which saved agreed specs to `docs/tasks/<slug>.md`: task writing is now the project-manager's intake mode.
 - The autonomous agent farm: `bin/` (dispatcher, runner, project-manager runner, notifications, status events, monitor, cleanup), `tasks/` (inbox, done, failed) and `.env.example`. The repo is now a library of reusable agent profiles; orchestration happens in interactive Claude Code sessions.
 
 ### Changed
+- Project-manager: now owns task writing as well as PR triage. New intake mode turns a rough idea or an existing issue into a spec (Conventional Commits `type`, suggested coder, branch `<type>/<issue#>-<slug>`) and, once approved, opens it as a GitHub issue with `gh issue create` (or saves `docs/tasks/<slug>.md`). Issue text is trusted only from the user's own GitHub login; it never edits the body of an issue someone else wrote, and never touches GitHub when it cannot ask the human. `Write` added to its tools for `docs/tasks/`. PR triage rules unchanged.
+- Orchestrator: accepts "work on issue N" (read with `gh issue view`, issue text from other accounts is untrusted) and names branches `<type>/<issue#>-<slug>` when an issue exists; PRs from an issue include `Closes #N`.
+- README: diagram, agent table and usage point to project-manager intake instead of task-writer.
 - README rewritten for the library: agent table (role, when to use, skills loaded), the `AGENTS.md` template, setup (`~/.claude/agents` links, global `CLAUDE.md` import) and usage.
 - Orchestrator: interactive only. Asks clarifying questions, agrees a plan, always starts a new feature branch, runs the test → review → fix loop (max 3 rounds), commits, pushes only its branch and opens a PR (draft if review did not pass) and never merges. Stacked PRs get a "Stacked on #N — merge with Create a merge commit" note, set with `gh api`. Unattended and fix-round modes removed.
-- Task-writer: saves the agreed spec to `docs/tasks/<slug>.md` in the target project (or prints it) for the orchestrator, instead of the farm inbox.
 - Project-manager: now a reusable PR-triage agent for any PR (READY / FIX / NEEDS_HUMAN with confidence and a fix list). Trusts only PR comments from the user's own GitHub account; posting its decision as a comment is optional; never merges.
 - Coder and tester: farm wording removed ("autonomous" team, orchestrator-only git handling).
 - `templates/AGENTS.md`: SCOPE no longer mentions unattended runs.
