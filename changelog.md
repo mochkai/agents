@@ -1,10 +1,20 @@
 # Changelog
 
-All notable changes to the agent farm are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+All notable changes to this agent library are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Removed
+- The autonomous agent farm: `bin/` (dispatcher, runner, project-manager runner, notifications, status events, monitor, cleanup), `tasks/` (inbox, done, failed) and `.env.example`. The repo is now a library of reusable agent profiles; orchestration happens in interactive Claude Code sessions.
+
 ### Changed
+- README rewritten for the library: agent table (role, when to use, skills loaded), the `AGENTS.md` template, setup (`~/.claude/agents` links, global `CLAUDE.md` import) and usage.
+- Orchestrator: interactive only. Asks clarifying questions, agrees a plan, always starts a new feature branch, runs the test → review → fix loop (max 3 rounds), commits, pushes only its branch and opens a PR (draft if review did not pass) and never merges. Stacked PRs get a "Stacked on #N — merge with Create a merge commit" note, set with `gh api`. Unattended and fix-round modes removed.
+- Task-writer: saves the agreed spec to `docs/tasks/<slug>.md` in the target project (or prints it) for the orchestrator, instead of the farm inbox.
+- Project-manager: now a reusable PR-triage agent for any PR (READY / FIX / NEEDS_HUMAN with confidence and a fix list). Trusts only PR comments from the user's own GitHub account; posting its decision as a comment is optional; never merges.
+- Coder and tester: farm wording removed ("autonomous" team, orchestrator-only git handling).
+- `templates/AGENTS.md`: SCOPE no longer mentions unattended runs.
+- `.gitignore`: only `.env` plus the local farm leftovers (`logs/`, `state/`, `worktrees/`, `tasks/`, `.farm.lock`).
 - Interactive orchestrator always works on a new feature branch, pushes only that branch, and asks before pushing anything else (review of #5).
 - Farm runs that fail or time out but leave commits on their branch are now pushed and opened as a **draft** PR titled `[WIP] <title>` (report plus a note that it did not pass tests or review). No project-manager step or notification for drafts. Runs without commits are unchanged, and `PR=0` still pushes nothing. The status event records the PR URL and `draft`.
 - A failed (or timed-out) fix round with new commits now pushes them to the existing PR branch and comments its report as `## Fix round <n> report (orchestrator): FAILED`, then notifies `needs_human` as before (the notification now includes the PR link and says whether the push failed). The project manager never runs for failed rounds, and a usage-limit requeue still resets the branch without pushing.
